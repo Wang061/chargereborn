@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "espressif-documentation": {
+      "type": "http",
+      "url": "https://mcp.espressif.com/docs"
+    },
+    "idf-bridge": {
+      "type": "stdio",
+      "command": "${CLAUDE_PROJECT_DIR:-.}/.venv-tools/Scripts/python.exe",
+      "args": ["${CLAUDE_PROJECT_DIR:-.}/scripts/idf_bridge_mcp.py"],
+      "env": { "IDF_TOOLS_PATH": "D:\\WJ\\Espressif" }
+    }
+  }
+}
