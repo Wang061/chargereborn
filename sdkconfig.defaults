@@ -1,0 +1,14 @@
+# S3-Forge 通用默认（可复现配置源；生成的 sdkconfig 不入 git）
+# 改默认值改本文件 / sdkconfig.defaults.esp32s3，然后删 sdkconfig 重 build 生效。
+
+# ---- 自定义分区表（含 coredump 分区）----
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# ---- Core Dump -> Flash (ELF)：panic 后取全任务栈+寄存器+原因 ----
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
+
+# ---- 调试期友好（栈溢出检测；panic 默认打印寄存器+回溯后重启）----
+CONFIG_COMPILER_STACK_CHECK_MODE_NORM=y

@@ -4,6 +4,11 @@
 
 ---
 
+## 2026-06-02 · 启用 Core Dump→Flash + 自定义分区表 + 去 MINIMAL_BUILD
+- **决策**：加 `partitions.csv`（含 coredump 分区）+ `sdkconfig.defaults`（CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH/DATA_FORMAT_ELF + 自定义分区表 + 栈检测）；移除根 CMakeLists 的 `MINIMAL_BUILD ON`。
+- **理由**：MINIMAL_BUILD 裁掉了 esp_coredump 组件导致其 Kconfig 缺失、coredump 配置无法生效；真实 harness 固件需完整组件 + panic 取证能力。
+- **影响**：build 较慢但代表性强；`mcp__idf-bridge__coredump_summary` 可用。实测 build 绿、target=esp32s3、coredump+自定义分区生效、产物 --chip esp32s3。注意 `rm -rf build sdkconfig` 会丢 target，需重 set-target esp32s3。
+
 ## 2026-06-02 · 固件收敛为单一根工程
 - **决策**：删除重复的 `hello_world/` 子目录，以 WORKplace 根（`CMakeLists.txt` + `main/`）为唯一固件主工程。
 - **理由**：两套相同骨架会让 idf.ps1 工作目录有歧义；根目录布局最扁平、与"项目根=WORKplace"一致。

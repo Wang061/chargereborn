@@ -1,0 +1,7 @@
+# S3-Forge ESP32-S3 专属默认（IDF 在 target=esp32s3 时自动叠加于 sdkconfig.defaults）
+# flash 大小/PSRAM 等连硬件确认后按 docs/ai/BOARD.md 填；当前留默认由 IDF 检测。
+
+# 示例（按实际板取消注释）：
+# CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+# CONFIG_SPIRAM=y
+# CONFIG_SPIRAM_MODE_OCT=y
