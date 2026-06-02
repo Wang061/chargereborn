@@ -1,0 +1,33 @@
+# ===== ESP-IDF 构建产物（实际产物在 hello_world/build/，用 **/ 全覆盖）=====
+**/build/
+**/config.env
+sdkconfig
+sdkconfig.old
+*.elf
+*.bin
+*.map
+managed_components/
+
+# ===== harness 运行时 =====
+logs/
+.venv-tools/
+.venv/
+.claude/.loop_active
+.claude/settings.local.json
+
+# ===== Python =====
+__pycache__/
+*.pyc
+*.pyo
+
+# ===== 编辑器 / 系统 / Office 锁文件 =====
+~$*
+*.tmp
+Thumbs.db
+.DS_Store
+
+# 说明：以下"应当提交"，故不忽略——
+#   sdkconfig.defaults / sdkconfig.defaults.esp32s3 / sdkconfig.ci（构建配置源）
+#   dependencies.lock（组件版本锁，保可复现）
+#   .claude/settings.json（项目级 harness 配置）
+#   docs/、_research/、计划.docx（设计与调研记录）
