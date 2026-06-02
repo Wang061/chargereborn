@@ -9,6 +9,12 @@
       "command": "${CLAUDE_PROJECT_DIR:-.}/.venv-tools/Scripts/python.exe",
       "args": ["${CLAUDE_PROJECT_DIR:-.}/scripts/idf_bridge_mcp.py"],
       "env": { "IDF_TOOLS_PATH": "D:\\WJ\\Espressif" }
+    },
+    "serena": {
+      "type": "stdio",
+      "command": "C:/Users/WJ0706/.local/bin/serena.exe",
+      "args": ["start-mcp-server", "--context", "claude-code",
+               "--project", "${CLAUDE_PROJECT_DIR:-.}", "--enable-web-dashboard", "false"]
     }
   }
 }

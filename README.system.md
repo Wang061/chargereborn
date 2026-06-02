@@ -20,7 +20,7 @@ Claude Code 驱动的 **ESP-IDF 5.5.4 + ESP32-S3** 项目级开发底座。
 ```
 
 ## 能力清单
-- **MCP**：`espressif-documentation`(官方文档检索) · `idf-bridge`(自写：build/size/set_target/flash/coredump/非阻塞 monitor) · 复用全局 `context7`。
+- **MCP**：`espressif-documentation`(官方文档检索) · `idf-bridge`(自写：build/size/set_target/flash/coredump/非阻塞 monitor) · `serena`(clangd 语义级找/改符号，已索引 C 固件) · 复用全局 `context7`。
 - **命令(14)**：`/esp-build /esp-flash /esp-monitor /esp-snap /esp-fix /esp-panic /esp-menucheck /esp-partition /freertos-review /driver-review /power-review /release-check /esp-loop /learn`。
 - **Agents(8)**：esp-planner / build-fix / flash-debugger / monitor-triage / freertos-reviewer / driver-architect / low-power-tuner / release-guardian。
 - **Skills(10)**：esp32s3-bringup / esp-idf-build-fix / esp-flash-recovery / esp-monitor-triage / esp-panic-backtrace / freertos-task-design / heap-memory-triage / esp-partition-ota / sdkconfig-change-review / embedded-code-review。
@@ -44,8 +44,12 @@ IDF=5.5.4 / target=esp32s3 / 构建经 idf.ps1 或 idf-bridge / FLASH_BAUD=92160
 4. git-bash spawn powershell 泄漏 MSYS → idf-bridge 用 `_clean_env()` 清洗 MSYSTEM/mingw（已内置）。
 5. python 打印中文撞 GBK 控制台 → hook 用 `ensure_ascii=True` / 脚本 ASCII stdout。
 
+## Serena（已配置可用）
+- 已 `uv tool install` serena 1.5.4（`C:/Users/WJ0706/.local/bin/serena.exe`），`.mcp.json` 注册，context=claude-code，`.serena/project.yml` 语言=cpp+python。
+- **clangd 经 socks 代理需 PySocks**：已 `uv tool install --with PySocks`，clangd 已下载、C 固件已索引（实测 cpp=1, python=8）。
+- 用途：`find_symbol` / `find_referencing_symbols` / `replace_symbol_body` / `rename_symbol` / `get_diagnostics` 等符号级操作（依赖 `build/compile_commands.json`，build 后生成）。
+
 ## 进阶（待触发，未默认配置）
-- **Serena**(语义级改码 MCP)：需装 `uv`（系统级，装前询问）+ `compile_commands.json`。
 - **OpenOCD JTAG / App Trace / GDBStub**：需接硬件 + 在 BOARD.md 确认 S3 原生 USB-JTAG 引出。
 - **cv2 视觉 MCP**：当前用 `snap.py` 落盘 + 原生 Read（更稳），如需实时流再上。
 

@@ -4,6 +4,11 @@
 
 ---
 
+## 2026-06-02 · 接入 Serena（clangd 语义级 C 代码 MCP）
+- **决策**：`uv tool install --with PySocks serena@a10c3e1`，`.mcp.json` 注册（command=`C:/Users/WJ0706/.local/bin/serena.exe`，context=claude-code，project=${CLAUDE_PROJECT_DIR:-.}，关 web dashboard），`.serena/project.yml` 语言设 `cpp,python`。
+- **理由**：用户已装 uv（`~/.local/bin`，缓存在 `D:\WJ\.uv`）；codegraphcontext/context7 不做 clangd 驱动的语义编辑。serena 默认按文件占比判成 python，需显式加 cpp 服务 C 固件。
+- **影响**：实测 `serena project index` 成功（cpp=1, python=8），clangd 经 socks 下载（需 PySocks，见 ref-windows-esp-env-gotchas）。serena 二进制在用户级 `.local/bin`（全局），但**激活只经本项目 .mcp.json**；不要则 `uv tool uninstall serena`。依赖 `build/compile_commands.json`。
+
 ## 2026-06-02 · 启用 Core Dump→Flash + 自定义分区表 + 去 MINIMAL_BUILD
 - **决策**：加 `partitions.csv`（含 coredump 分区）+ `sdkconfig.defaults`（CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH/DATA_FORMAT_ELF + 自定义分区表 + 栈检测）；移除根 CMakeLists 的 `MINIMAL_BUILD ON`。
 - **理由**：MINIMAL_BUILD 裁掉了 esp_coredump 组件导致其 Kconfig 缺失、coredump 配置无法生效；真实 harness 固件需完整组件 + panic 取证能力。
