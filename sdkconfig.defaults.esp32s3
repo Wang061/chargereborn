@@ -1,9 +1,11 @@
 # S3-Forge ESP32-S3 专属默认（target=esp32s3 时自动叠加于 sdkconfig.defaults）
 # 板卡：ESP32-S3-WROOM-1-N16R8（16MB Flash + 8MB Octal/OPI PSRAM）。详见 docs/ai/BOARD.md。
 
-# ---- Flash 16MB ----
+# ---- Flash 16MB Quad (N16 是 quad flash，非 octal；用 QIO 比默认 DIO 快) ----
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+# 切勿启用 OCT_FLASH / 烧 FLASH_TYPE eFuse（本模块是 quad flash，octal 配置不适用且 eFuse 不可逆）
 
 # ---- PSRAM 8MB, Octal(OPI) ----
 CONFIG_SPIRAM=y

@@ -6,7 +6,8 @@
 
 ## 2026-06-03 · 确定开发板 = ESP32-S3-WROOM-1-N16R8
 - **决策**：填 BOARD.md；`sdkconfig.defaults.esp32s3` 设 `FLASHSIZE_16MB` + `SPIRAM`(Octal/OPI, 80M)。
-- **依据**：16MB Flash + 8MB Octal PSRAM；双 Type-C 含**原生 USB-Serial-JTAG**(GPIO19/20)→ 板载 JTAG 零外接可用。危险脚：GPIO33-37(Octal Flash/PSRAM)、strapping GPIO0/45/46、USB GPIO19/20、RGB GPIO48。
+- **依据**：16MB Quad(QIO) Flash + 8MB Octal PSRAM(VDD **3.3V**)；双 Type-C 含**原生 USB-Serial-JTAG**(GPIO19/20)→ 板载 JTAG 零外接可用。
+- **数据手册核实修正**(DS v1.8，见 `_research/board_datasheet.md`)：Octal PSRAM 保留脚实为 **GPIO35/36/37**(非 33-37、非卖家的 34-37；33/34 自由)；strapping 共 **4 个**：GPIO0(boot)/GPIO3(JTAG源,无内部上下拉)/GPIO45(VDD_SPI 3.3V默认)/GPIO46(boot+ROM打印)；RGB LED **GPIO48 或 38**(克隆板需实测)；flash 设 QIO；Windows 板载 JTAG 需 WinUSB 驱动。
 - **影响**：实测 set-target+build 绿，`--chip esp32s3 --flash_size 16MB`、Octal PSRAM 启用。OpenOCD 可用 `esp32s3-builtin.cfg`，无需外接探针（之前"探针待定"已解决）。
 
 ## 2026-06-02 · 接入 Serena（clangd 语义级 C 代码 MCP）
