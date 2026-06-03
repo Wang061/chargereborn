@@ -1,7 +1,12 @@
-# S3-Forge ESP32-S3 专属默认（IDF 在 target=esp32s3 时自动叠加于 sdkconfig.defaults）
-# flash 大小/PSRAM 等连硬件确认后按 docs/ai/BOARD.md 填；当前留默认由 IDF 检测。
+# S3-Forge ESP32-S3 专属默认（target=esp32s3 时自动叠加于 sdkconfig.defaults）
+# 板卡：ESP32-S3-WROOM-1-N16R8（16MB Flash + 8MB Octal/OPI PSRAM）。详见 docs/ai/BOARD.md。
 
-# 示例（按实际板取消注释）：
-# CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
-# CONFIG_SPIRAM=y
-# CONFIG_SPIRAM_MODE_OCT=y
+# ---- Flash 16MB ----
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+
+# ---- PSRAM 8MB, Octal(OPI) ----
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+# 默认 80MHz；如不稳可降 40MHz（CONFIG_SPIRAM_SPEED_40M=y）
+CONFIG_SPIRAM_SPEED_80M=y

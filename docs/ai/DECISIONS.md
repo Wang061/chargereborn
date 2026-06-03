@@ -4,6 +4,11 @@
 
 ---
 
+## 2026-06-03 · 确定开发板 = ESP32-S3-WROOM-1-N16R8
+- **决策**：填 BOARD.md；`sdkconfig.defaults.esp32s3` 设 `FLASHSIZE_16MB` + `SPIRAM`(Octal/OPI, 80M)。
+- **依据**：16MB Flash + 8MB Octal PSRAM；双 Type-C 含**原生 USB-Serial-JTAG**(GPIO19/20)→ 板载 JTAG 零外接可用。危险脚：GPIO33-37(Octal Flash/PSRAM)、strapping GPIO0/45/46、USB GPIO19/20、RGB GPIO48。
+- **影响**：实测 set-target+build 绿，`--chip esp32s3 --flash_size 16MB`、Octal PSRAM 启用。OpenOCD 可用 `esp32s3-builtin.cfg`，无需外接探针（之前"探针待定"已解决）。
+
 ## 2026-06-02 · 接入 Serena（clangd 语义级 C 代码 MCP）
 - **决策**：`uv tool install --with PySocks serena@a10c3e1`，`.mcp.json` 注册（command=`C:/Users/WJ0706/.local/bin/serena.exe`，context=claude-code，project=${CLAUDE_PROJECT_DIR:-.}，关 web dashboard），`.serena/project.yml` 语言设 `cpp,python`。
 - **理由**：用户已装 uv（`~/.local/bin`，缓存在 `D:\WJ\.uv`）；codegraphcontext/context7 不做 clangd 驱动的语义编辑。serena 默认按文件占比判成 python，需显式加 cpp 服务 C 固件。

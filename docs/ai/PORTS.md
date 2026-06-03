@@ -10,8 +10,10 @@
 ## JTAG
 | 探针 | 接口 cfg | 备注 |
 |---|---|---|
-| 板载 USB-JTAG | board/esp32s3-builtin.cfg | 仅当 BOARD.md 确认原生 USB-JTAG 引出 |
-| 外接（如 ESP-Prog/J-Link） | TODO | 需对应 interface cfg |
+| **板载 USB-JTAG（本板可用 ✓）** | `board/esp32s3-builtin.cfg` | ESP32-S3-N16R8 双 Type-C 含原生 USB-Serial-JTAG（GPIO19/20），**零外接探针**即可 `idf.py openocd`/`gdb` |
+| 外接（ESP-Prog/J-Link） | —— | 不需要（用板载） |
+
+调试用原生 USB 口（兼供电+JTAG+CDC）；接 GPIO19/20。
 
 ## 历史/备注
 - TODO（端口偶发变化、驱动问题、占用冲突等记录于此）
