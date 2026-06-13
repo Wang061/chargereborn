@@ -4,6 +4,7 @@
 #include "esp_log.h"
 #include "esp_system.h"
 #include "bsp.h"
+#include "net.h"
 
 static const char *TAG = "main";
 
@@ -11,6 +12,9 @@ void app_main(void)
 {
     bsp_print_sysinfo();
     bsp_psram_selftest();
+
+    net_softap_start();
+    net_http_start();
 
     uint32_t sec = 0;
     while (1) {
