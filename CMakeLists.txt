@@ -4,4 +4,4 @@ cmake_minimum_required(VERSION 3.16)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # S3-Forge: 不用 MINIMAL_BUILD —— 真实固件需完整组件 + Core Dump/调试组件可用。
-project(hello_world)
+project(chargereborn_brain)
