@@ -11,7 +11,7 @@
 | **板载 USB-JTAG** | **可用 ✓**（原生 USB 口）→ OpenOCD `board/esp32s3-builtin.cfg` **零外接**断点调试 |
 | 外接 JTAG 探针 | 不需要（用板载） |
 | WiFi / 蓝牙 | 2.4G 802.11 b/g/n（ADC2 在 WiFi 开时不可用）/ BLE 5.0 |
-| COM 口 | **COM6**（用户提供。板有双 USB 口可能各占一个 COM；调试优先用原生 USB 口那个） |
+| COM 口 | **COM7 = 原生 USB-Serial-JTAG（flash 用）；COM11 = CH340 UART 桥 = UART0 主 console（monitor/日志用）**（2026-06-13 实测；原 COM6 已过时，端口号可能随插拔变，认友好名而非号） |
 | 允许 AI 自动 flash | **NO**（每次 flash 当场确认） |
 
 ## 危险 / 特殊 GPIO（官方 DS v1.8 核实，改动前必核对）
