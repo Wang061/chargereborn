@@ -10,6 +10,7 @@ static const char *TAG = "main";
 void app_main(void)
 {
     bsp_print_sysinfo();
+    bsp_psram_selftest();
 
     uint32_t sec = 0;
     while (1) {
