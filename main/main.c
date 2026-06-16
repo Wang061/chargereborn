@@ -6,6 +6,7 @@
 #include "bsp.h"
 #include "net.h"
 #include "camera.h"
+#include "ai.h"
 
 static const char *TAG = "main";
 
@@ -21,6 +22,10 @@ void app_main(void)
     net_softap_start();
     net_http_start();
     net_stream_start();
+
+    if (ai_init() != ESP_OK) {
+        ESP_LOGW(TAG, "ai init failed — 推理不可用，继续运行");
+    }
 
     uint32_t sec = 0;
     while (1) {
