@@ -20,6 +20,7 @@ void app_main(void)
 
     net_softap_start();
     net_http_start();
+    net_stream_start();
 
     uint32_t sec = 0;
     while (1) {

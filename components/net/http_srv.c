@@ -14,10 +14,17 @@ static esp_err_t root_get(httpd_req_t *req)
 {
     const char *html =
         "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
-        "<title>ChargeReborn Brain</title></head><body>"
-        "<h1>ChargeReborn Brain alive</h1>"
-        "<p>edge-AI vision spine - phase 1</p>"
-        "<p><a href=\"/status\">/status</a></p></body></html>";
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        "<title>ChargeReborn 采集</title></head>"
+        "<body style=\"font-family:sans-serif;text-align:center\">"
+        "<h3>ChargeReborn 数据采集</h3>"
+        "<div>类名 <input id=n value=\"18650\" size=10> "
+        "<button onclick=\"location='/capture?name='+encodeURIComponent("
+        "document.getElementById('n').value)\">抓拍</button></div>"
+        "<p><img id=v style=\"max-width:96vw\"></p>"
+        "<script>document.getElementById('v').src="
+        "'http://'+location.hostname+':81/stream';</script>"
+        "</body></html>";
     httpd_resp_set_type(req, "text/html");
     return httpd_resp_sendstr(req, html);
 }
