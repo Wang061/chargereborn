@@ -27,6 +27,8 @@ extern "C" {
 #define CAM_PIN_D0       8
 
 #define CAM_XCLK_HZ     16000000   // 16MHz：启用 ESP32-S3 EDMA 模式、对飞线更友好；不稳降 10000000
+#define CAM_JPEG_QUALITY 12        // JPEG 质量 0-63，越小越清
+#define CAM_FB_COUNT     2         // 帧缓冲数；JPEG 模式 >1 → 连续取流更顺
 
 // 注意：函数名用 camera_ 前缀。托管组件 esp32-camera 的私有 HAL(cam_hal.c)已导出
 //       全局符号 cam_init/cam_deinit，裸用 cam_ 前缀会在链接期符号冲突(multiple definition)。
