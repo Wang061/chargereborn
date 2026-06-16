@@ -30,7 +30,7 @@
 **做(本刀):**
 - 新增 `components/camera/`:基于 `espressif/esp32-camera` 托管组件,取帧(JPEG 直出,帧缓冲住 PSRAM),SCCB 自动探测传感器并打印 PID。
 - 扩 `components/net/`:`/stream`(multipart MJPEG 实时流)+ `/capture`(单张 JPEG,`attachment` 下载,文件名带类名前缀)。
-- `main.c`:init 顺序加 `cam_init()`,失败有清晰诊断、不硬崩。
+- `main.c`:init 顺序加 `camera_init()`,失败有清晰诊断、不硬崩。
 - 一版**经官方文档逐脚核对**的相机接线表(排针 → DevKitC GPIO)。
 
 **不做(延后,各自后续处理):**
@@ -55,7 +55,7 @@ WORKplace/
 │   ├── camera/                 # 新增:取帧驱动(封装 esp32-camera)
 │   │   ├── idf_component.yml    #   依赖 espressif/esp32-camera
 │   │   ├── include/camera.h
-│   │   ├── camera.c            #   cam_init / cam_capture / cam_return + 引脚宏
+│   │   ├── camera.c            #   camera_init / camera_capture / camera_return + 引脚宏
 │   │   └── CMakeLists.txt
 │   └── net/                    # 扩:加 /stream + /capture
 │       ├── include/net.h        #   加 net_http_start 内注册流端点(对外接口不变)
@@ -66,16 +66,16 @@ WORKplace/
 
 **契约:**
 - `camera`:
-  - `esp_err_t cam_init(void)` —— 初始化 DVP + SCCB,自动探测传感器,日志打印 PID 与生效分辨率;失败返回错误码并打印诊断,**不 abort**。
-  - `camera_fb_t *cam_capture(void)` —— 取一帧(JPEG);失败返回 NULL。
-  - `void cam_return(camera_fb_t *fb)` —— 归还帧缓冲(`esp_camera_fb_return`)。
+  - `esp_err_t camera_init(void)` —— 初始化 DVP + SCCB,自动探测传感器,日志打印 PID 与生效分辨率;失败返回错误码并打印诊断,**不 abort**。
+  - `camera_fb_t *camera_capture(void)` —— 取一帧(JPEG);失败返回 NULL。
+  - `void camera_return(camera_fb_t *fb)` —— 归还帧缓冲(`esp_camera_fb_return`)。
   - 依赖 `esp32-camera` + PSRAM;隔离引脚/格式细节,业务层只见上述 3 个 API。
 - `net`(扩):
-  - `/stream` —— `multipart/x-mixed-replace`,循环 `cam_capture → 发送 JPEG → cam_return`。
+  - `/stream` —— `multipart/x-mixed-replace`,循环 `camera_capture → 发送 JPEG → camera_return`。
   - `/capture` —— 取一帧 JPEG,`Content-Disposition: attachment; filename="<类名>_<ms>.jpg"` 触发浏览器下载;类名取自查询参数(缺省 `cap`)。
   - `/` 存活页升级为采集页(见 §6):内嵌 `<img src=/stream>` + 类名输入框 + 抓拍按钮。
   - net 从 camera **拉**帧,camera 不知道 web 存在。
-- `main`:只编排与状态机;`cam_init` 失败时跳过流端点注册并持续打印告警心跳(便于查接线),不进 boot loop。
+- `main`:只编排与状态机;`camera_init` 失败时跳过流端点注册并持续打印告警心跳(便于查接线),不进 boot loop。
 
 ---
 
@@ -137,9 +137,9 @@ PC 端按类名分文件夹收图 → 后续 YOLO 标注直接用
 
 ## 8. 错误处理与资源
 
-- `cam_init` 失败(多为接线错/传感器未识别)→ 打印 PID/错误码诊断,跳过流端点,主循环持续告警心跳,**不 abort、不 boot loop**。
+- `camera_init` 失败(多为接线错/传感器未识别)→ 打印 PID/错误码诊断,跳过流端点,主循环持续告警心跳,**不 abort、不 boot loop**。
 - 帧缓冲:`CAMERA_FB_IN_PSRAM`,`fb_count=2`,`grab_mode=LATEST`,`pixformat=JPEG`(省 RAM、直出可传)。
-- 每次 `cam_capture` 必配对 `cam_return`,杜绝帧缓冲泄漏拖垮 PSRAM。
+- 每次 `camera_capture` 必配对 `camera_return`,杜绝帧缓冲泄漏拖垮 PSRAM。
 - 供电:相机吃电流,`3V3` 供,留意 brownout(必要时看 `brownout` 复位日志,降分辨率/换供电)。
 
 ---
@@ -162,7 +162,7 @@ panic 必须解码回溯(addr2line / `coredump_summary`)定位到 函数 + file:
 ## 10. 风险与护栏(诚实)
 
 - **飞线信号完整性**(高时钟)→ OV2640 先行 + 短线 + XCLK 适中;翻车按 降分辨率 → 降 XCLK → 换 OV2640 兜底。
-- **接线错**是首次 bring-up 头号失败源 → `cam_init` 诊断日志为抓手;逐脚对照锁定的接线表。
+- **接线错**是首次 bring-up 头号失败源 → `camera_init` 诊断日志为抓手;逐脚对照锁定的接线表。
 - **供电/brownout** → 见 §8。
 - **版本锁**:全程 IDF 5.5.4 / target esp32s3;`esp32-camera` 取兼容 5.5 的托管版本,不升 IDF 主版本、不换 target。
 - **ESP 代码/引脚/寄存器** → 落地用 `espressif-documentation` 官方核对,不凭记忆(项目铁律)。

@@ -26,12 +26,12 @@
 ```
 WORKplace/
 ├── main/
-│   ├── main.c                       # 修改:init 加 cam_init()(T1)、net_stream_start()(T3)
+│   ├── main.c                       # 修改:init 加 camera_init()(T1)、net_stream_start()(T3)
 │   └── CMakeLists.txt               # 修改:REQUIRES 加 camera(T1)
 ├── components/
 │   ├── camera/                      # 新增组件
 │   │   ├── idf_component.yml        # 新建:依赖 espressif/esp32-camera
-│   │   ├── include/camera.h         # 新建:接线表宏 + cam_init/cam_capture/cam_return
+│   │   ├── include/camera.h         # 新建:接线表宏 + camera_init/camera_capture/camera_return
 │   │   ├── camera.c                 # 新建:esp_camera_init + 取帧/归还封装
 │   │   └── CMakeLists.txt           # 新建
 │   └── net/
@@ -58,7 +58,7 @@ Expected: 末尾 `Project build complete.` / 生成 `build/chargereborn_brain.bi
 
 ## Task 1: camera 组件 + 锁定接线表 + 拉 esp32-camera(取帧打通)
 
-产出:新增 `camera` 组件,`cam_init()` 跑通 esp32-camera、自动探测传感器并打印 PID;`main` 启动时初始化相机(失败不崩、打印诊断便于查接线)。
+产出:新增 `camera` 组件,`camera_init()` 跑通 esp32-camera、自动探测传感器并打印 PID;`main` 启动时初始化相机(失败不崩、打印诊断便于查接线)。
 
 **Files:**
 - Create: `components/camera/include/camera.h`
@@ -102,11 +102,11 @@ extern "C" {
 #define CAM_XCLK_HZ     16000000   // 16MHz：启用 ESP32-S3 EDMA 模式、对飞线更友好；不稳降 10000000
 
 // 初始化相机（DVP+SCCB，自动探测传感器）。成功 ESP_OK；失败返回错误码并打印诊断，不 abort。
-esp_err_t cam_init(void);
-// 取一帧（JPEG），失败返回 NULL。用完必须 cam_return（配对，杜绝帧缓冲泄漏）。
-camera_fb_t *cam_capture(void);
+esp_err_t camera_init(void);
+// 取一帧（JPEG），失败返回 NULL。用完必须 camera_return（配对，杜绝帧缓冲泄漏）。
+camera_fb_t *camera_capture(void);
 // 归还帧缓冲。
-void cam_return(camera_fb_t *fb);
+void camera_return(camera_fb_t *fb);
 
 #ifdef __cplusplus
 }
@@ -121,7 +121,7 @@ void cam_return(camera_fb_t *fb);
 
 static const char *TAG = "camera";
 
-esp_err_t cam_init(void)
+esp_err_t camera_init(void)
 {
     camera_config_t config = {
         .pin_pwdn     = CAM_PIN_PWDN,
@@ -163,14 +163,14 @@ esp_err_t cam_init(void)
     return ESP_OK;
 }
 
-camera_fb_t *cam_capture(void)
+camera_fb_t *camera_capture(void)
 {
     camera_fb_t *fb = esp_camera_fb_get();
     if (!fb) ESP_LOGW(TAG, "esp_camera_fb_get returned NULL");
     return fb;
 }
 
-void cam_return(camera_fb_t *fb)
+void camera_return(camera_fb_t *fb)
 {
     if (fb) esp_camera_fb_return(fb);
 }
@@ -196,7 +196,7 @@ idf_component_register(SRCS "camera.c"
 - [ ] **Step 5: 改 `main/main.c`** —— 顶部 include 区加 `#include "camera.h"`,并在 `bsp_psram_selftest();` 之后、`net_softap_start();` 之前加:
 
 ```c
-    if (cam_init() != ESP_OK) {
+    if (camera_init() != ESP_OK) {
         ESP_LOGW(TAG, "camera init failed — 图传不可用，继续运行便于查接线");
     }
 ```
@@ -276,7 +276,7 @@ static esp_err_t capture_get(httpd_req_t *req)
         }
     }
 
-    camera_fb_t *fb = cam_capture();
+    camera_fb_t *fb = camera_capture();
     if (!fb) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "capture failed");
         return ESP_FAIL;
@@ -290,7 +290,7 @@ static esp_err_t capture_get(httpd_req_t *req)
     httpd_resp_set_type(req, "image/jpeg");
     httpd_resp_set_hdr(req, "Content-Disposition", disp);
     esp_err_t r = httpd_resp_send(req, (const char *)fb->buf, fb->len);
-    cam_return(fb);   // 与 cam_capture 配对
+    camera_return(fb);   // 与 camera_capture 配对
     return r;
 }
 ```
@@ -367,7 +367,7 @@ static esp_err_t stream_get(httpd_req_t *req)
 
     char part[64];
     while (true) {
-        camera_fb_t *fb = cam_capture();
+        camera_fb_t *fb = camera_capture();
         if (!fb) { res = ESP_FAIL; break; }
 
         res = httpd_resp_send_chunk(req, STREAM_BOUNDARY, strlen(STREAM_BOUNDARY));
@@ -379,7 +379,7 @@ static esp_err_t stream_get(httpd_req_t *req)
         if (res == ESP_OK) {
             res = httpd_resp_send_chunk(req, (const char *)fb->buf, fb->len);
         }
-        cam_return(fb);     // 与 cam_capture 配对
+        camera_return(fb);     // 与 camera_capture 配对
         if (res != ESP_OK) break;   // 客户端断开 → 退出循环
     }
     ESP_LOGI(TAG, "stream client closed");
@@ -508,7 +508,7 @@ git commit -m "docs(board): 记录相机 DVP 接线表(实测点亮)"
 
 - **spec §2「做」camera 组件取帧** → Task 1 ✅
 - **spec §2「做」/capture** → Task 2 ✅;**/stream** → Task 3 ✅
-- **spec §3 契约**(cam_init/cam_capture/cam_return;net 从 camera 拉帧;main 仅编排;cam_init 失败不崩)→ Task 1-3 ✅
+- **spec §3 契约**(camera_init/camera_capture/camera_return;net 从 camera 拉帧;main 仅编排;camera_init 失败不崩)→ Task 1-3 ✅
 - **spec §4 OV2640 先行 / 同固件两颗通吃**(SCCB 自动探测 + 打印 PID;格式/分辨率与传感器无关)→ Task 1 ✅
 - **spec §5 接线表 + 避禁用脚** → Task 1 `camera.h` + Task 4 入档 ✅
 - **spec §6 采集 UX**(实时取景 + 类名 + 抓拍下载 + VGA)→ Task 2/3 ✅
@@ -516,7 +516,7 @@ git commit -m "docs(board): 记录相机 DVP 接线表(实测点亮)"
 - **spec §8 错误处理**(不 abort;PSRAM/fb_count2/LATEST/JPEG;capture 配对 return;brownout 提示)→ Task 1-3 ✅
 - **spec §9 验证**(各任务 build 绿 + flash + monitor + 手机实测)→ 各 Task Step ✅
 - **无占位符**:各步均含完整代码/命令/预期输出 ✅
-- **签名一致**:`cam_init`/`cam_capture`/`cam_return`/`net_stream_start` 在 header 与调用处一致;`/capture` `name` 参数与采集页一致 ✅
+- **签名一致**:`camera_init`/`camera_capture`/`camera_return`/`net_stream_start` 在 header 与调用处一致;`/capture` `name` 参数与采集页一致 ✅
 
 ## 不在本计划(后续,各自单独处理)
 
