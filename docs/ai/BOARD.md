@@ -39,3 +39,22 @@
 | RGB LED（板载） | 48 或 38 | WS2812，先试 48；blink/状态指示 |
 | 舵机×6 PWM | TODO | 避开 35/36/37(PSRAM)、strapping(0/3/45/46)、USB(19/20) |
 | 串口/通信 | TODO |  |
+
+## 相机接线表（正点原子 ATK-OV2640 排针 → DevKitC，2026-06-16 实测点亮 OK）
+> 实测日志：`Detected OV2640 camera` / `PID=0x0026` / SCCB `pin_sda 4 pin_scl 5`。
+> **要点：模块板载 24MHz 有源晶振自时钟，排针无 XCLK 脚 → `pin_xclk=-1`**（驱动 esp_camera.c:180 守卫支持外部时钟）。
+> PWDN/RST 接 GPIO 由驱动做上电+复位脉冲（检测最稳）。FLASH(补光灯) 不接。真相以 `components/camera/include/camera.h` 的 `CAM_PIN_*` 为准。
+
+| 模块脚 | GPIO | 模块脚 | GPIO |
+|---|---|---|---|
+| SCL(SIO_C) | 5 | VSYNC | 6 |
+| SDA(SIO_D) | 4 | HREF | 7 |
+| PCLK | 13 | PWDN | 15 |
+| D0 | 8 | RST | 21 |
+| D1 | 9 | D5 | 18 |
+| D2 | 10 | D6 | 17 |
+| D3 | 11 | D7 | 16 |
+| D4 | 12 | XCLK | 不接(自时钟) |
+| VCC | 3V3 | GND | GND |
+
+- OV5640（正点原子 ATK-MC5640 排针 / FD5640 FPC，备选）：有 MCLK 脚需外部 XCLK，固件 pin 配置另起一套；上 OV5640 时再核对 `datasheets/OV5640-*`。
