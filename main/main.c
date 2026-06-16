@@ -10,6 +10,25 @@
 
 static const char *TAG = "main";
 
+// 后台检测任务：周期抓相机帧→推理→日志。
+// 栈 8192：esp-dl run 调用栈较深 + 首帧含模型加载；优先级 3：低于 WiFi(23)/httpd，不抢网络。
+static void detect_task(void *arg)
+{
+    (void)arg;
+    ai_result_t r;
+    while (1) {
+        if (ai_detect_oneshot(&r) == ESP_OK) {
+            ESP_LOGI(TAG, "detect: n=%d infer=%ums", r.count, r.infer_ms);
+            for (int i = 0; i < r.count; i++) {
+                ESP_LOGI(TAG, "  #%d %s %.2f [%d,%d,%d,%d]", i,
+                         ai_class_name(r.boxes[i].cls), r.boxes[i].score,
+                         r.boxes[i].x1, r.boxes[i].y1, r.boxes[i].x2, r.boxes[i].y2);
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(500));   // ~2Hz，留 CPU 给 WiFi/图传
+    }
+}
+
 void app_main(void)
 {
     bsp_print_sysinfo();
@@ -26,17 +45,7 @@ void app_main(void)
     if (ai_init() != ESP_OK) {
         ESP_LOGW(TAG, "ai init failed — 推理不可用，继续运行");
     } else {
-        ai_result_t air;
-        if (ai_selftest_builtin(&air) == ESP_OK) {
-            ESP_LOGI(TAG, "ai selftest: n=%d infer=%ums", air.count, air.infer_ms);
-            for (int i = 0; i < air.count; i++) {
-                ESP_LOGI(TAG, "  #%d %s %.2f [%d,%d,%d,%d]", i,
-                         ai_class_name(air.boxes[i].cls), air.boxes[i].score,
-                         air.boxes[i].x1, air.boxes[i].y1, air.boxes[i].x2, air.boxes[i].y2);
-            }
-        } else {
-            ESP_LOGW(TAG, "ai selftest failed");
-        }
+        xTaskCreate(detect_task, "detect", 8192, NULL, 3, NULL);
     }
 
     uint32_t sec = 0;

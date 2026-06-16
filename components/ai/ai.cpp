@@ -1,6 +1,7 @@
 #include "ai.h"
 #include "espdet_detect.hpp"
 #include "dl_image_jpeg.hpp"
+#include "camera.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
@@ -9,9 +10,6 @@
 #include <string.h>
 
 static const char *TAG = "ai";
-
-extern const uint8_t test_cat_start[] asm("_binary_test_cat_jpg_start");
-extern const uint8_t test_cat_end[]   asm("_binary_test_cat_jpg_end");
 
 static ESPDetDetect    *s_det  = nullptr;
 static SemaphoreHandle_t s_lock = nullptr;
@@ -47,19 +45,19 @@ extern "C" esp_err_t ai_detect_jpeg(const uint8_t *jpg, size_t len, ai_result_t 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     run_img(img, out);
     xSemaphoreGive(s_lock);
-    heap_caps_free(img.data);
+    heap_caps_free(img.data);   // sw_decode_jpeg 输出必须释放
     return ESP_OK;
 }
 
 extern "C" esp_err_t ai_detect_oneshot(ai_result_t *out) {
-    if (out) memset(out, 0, sizeof(*out));
-    return ESP_ERR_NOT_SUPPORTED;   // M3 实现（接相机）
-}
-
-extern "C" esp_err_t ai_selftest_builtin(ai_result_t *out) {
-    return ai_detect_jpeg(test_cat_start, (size_t)(test_cat_end - test_cat_start), out);
+    if (!out) return ESP_ERR_INVALID_ARG;
+    camera_fb_t *fb = camera_capture();          // 相机直出 JPEG VGA
+    if (!fb) { memset(out, 0, sizeof(*out)); return ESP_FAIL; }
+    esp_err_t e = ai_detect_jpeg(fb->buf, fb->len, out);
+    camera_return(fb);                            // 与 camera_capture 配对，杜绝帧缓冲泄漏
+    return e;
 }
 
 extern "C" const char *ai_class_name(int cls) {
-    return (cls == 0) ? "cat" : "obj";   // 占位
+    return (cls == 0) ? "cat" : "obj";   // 占位（M5 换电池模型时改这张表）
 }
