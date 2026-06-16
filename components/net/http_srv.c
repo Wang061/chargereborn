@@ -13,18 +13,32 @@ static const char *TAG = "http_srv";
 static esp_err_t root_get(httpd_req_t *req)
 {
     const char *html =
-        "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
-        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         "<title>ChargeReborn 采集</title></head>"
-        "<body style=\"font-family:sans-serif;text-align:center\">"
+        "<body style='font-family:sans-serif;text-align:center'>"
         "<h3>ChargeReborn 数据采集</h3>"
-        "<div>类名 <input id=n value=\"18650\" size=10> "
-        "<button onclick=\"location='/capture?name='+encodeURIComponent("
-        "document.getElementById('n').value)\">抓拍</button></div>"
-        "<p><img id=v style=\"max-width:96vw\"></p>"
-        "<script>document.getElementById('v').src="
-        "'http://'+location.hostname+':81/stream';</script>"
-        "</body></html>";
+        "<div>类名 <input id=n value='18650' size=8> "
+        "间隔 <input id=iv value='1.5' size=3>秒 "
+        "<button onclick='shot()'>抓拍</button> "
+        "<button id=run onclick='toggle()'>连拍开始</button> "
+        "已存 <span id=c>0</span> 张</div>"
+        "<p><img id=v style='max-width:96vw'></p>"
+        "<script>"
+        "var t=null,cnt=0;"
+        "function nm(){return encodeURIComponent(document.getElementById('n').value||'cap');}"
+        "function shot(){"
+        "fetch('/capture?name='+nm()).then(function(r){return r.blob();}).then(function(b){"
+        "var a=document.createElement('a');a.href=URL.createObjectURL(b);"
+        "a.download=(document.getElementById('n').value||'cap')+'_'+Date.now()+'.jpg';"
+        "a.click();URL.revokeObjectURL(a.href);"
+        "document.getElementById('c').textContent=++cnt;});}"
+        "function toggle(){var b=document.getElementById('run');"
+        "if(t){clearInterval(t);t=null;b.textContent='连拍开始';return;}"
+        "var ms=Math.max(300,parseFloat(document.getElementById('iv').value||'1.5')*1000);"
+        "t=setInterval(shot,ms);b.textContent='连拍停止';}"
+        "document.getElementById('v').src='http://'+location.hostname+':81/stream';"
+        "</script></body></html>";
     httpd_resp_set_type(req, "text/html");
     return httpd_resp_sendstr(req, html);
 }
