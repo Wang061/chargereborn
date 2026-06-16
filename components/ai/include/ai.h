@@ -27,6 +27,8 @@ esp_err_t ai_init(void);
 esp_err_t ai_detect_jpeg(const uint8_t *jpg, size_t len, ai_result_t *out);
 // 便捷：抓一帧相机(JPEG)→detect→归还帧。线程安全。
 esp_err_t ai_detect_oneshot(ai_result_t *out);
+// 读取最近一次检测结果缓存（由后台任务更新；不触发相机/推理，线程安全）。供 /detect。
+void ai_get_last(ai_result_t *out);
 // 类别 id → 人类可读名（占位）。
 const char *ai_class_name(int cls);
 

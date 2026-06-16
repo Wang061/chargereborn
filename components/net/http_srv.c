@@ -7,6 +7,7 @@
 #include "esp_http_server.h"
 #include <string.h>
 #include "camera.h"
+#include "ai.h"
 
 static const char *TAG = "http_srv";
 
@@ -23,7 +24,11 @@ static esp_err_t root_get(httpd_req_t *req)
         "<button onclick='shot()'>抓拍</button> "
         "<button id=run onclick='toggle()'>连拍开始</button> "
         "已存 <span id=c>0</span> 张</div>"
-        "<p><img id=v style='max-width:96vw'></p>"
+        "<div><button id=det onclick='dtog()'>识别开始</button> <span id=ds>-</span></div>"
+        "<p style='position:relative;display:inline-block;line-height:0'>"
+        "<img id=v style='max-width:96vw;display:block'>"
+        "<canvas id=ov style='position:absolute;left:0;top:0;pointer-events:none'></canvas>"
+        "</p>"
         "<script>"
         "var t=null,cnt=0;"
         "function nm(){return encodeURIComponent(document.getElementById('n').value||'cap');}"
@@ -37,6 +42,21 @@ static esp_err_t root_get(httpd_req_t *req)
         "if(t){clearInterval(t);t=null;b.textContent='连拍开始';return;}"
         "var ms=Math.max(300,parseFloat(document.getElementById('iv').value||'1.5')*1000);"
         "t=setInterval(shot,ms);b.textContent='连拍停止';}"
+        "var dt=null;"
+        "function draw(d){var im=document.getElementById('v'),cv=document.getElementById('ov');"
+        "cv.width=im.clientWidth;cv.height=im.clientHeight;"
+        "var g=cv.getContext('2d');g.clearRect(0,0,cv.width,cv.height);"
+        "document.getElementById('ds').textContent='n='+d.n+' '+d.infer_ms+'ms';"
+        "if(!d.w||!d.n){return;}var sx=cv.width/d.w,sy=cv.height/d.h;"
+        "g.lineWidth=2;g.strokeStyle='#0f0';g.fillStyle='#0f0';g.font='14px sans-serif';"
+        "for(var i=0;i<d.boxes.length;i++){var b=d.boxes[i];"
+        "var x=b.x1*sx,y=b.y1*sy;"
+        "g.strokeRect(x,y,(b.x2-b.x1)*sx,(b.y2-b.y1)*sy);"
+        "g.fillText(b.name+' '+b.s.toFixed(2),x+2,y>14?y-3:y+12);}}"
+        "function poll(){fetch('/detect').then(function(r){return r.json();}).then(draw).catch(function(){});}"
+        "function dtog(){var b=document.getElementById('det');"
+        "if(dt){clearInterval(dt);dt=null;b.textContent='识别开始';return;}"
+        "dt=setInterval(poll,700);b.textContent='识别停止';}"
         "document.getElementById('v').src='http://'+location.hostname+':81/stream';"
         "</script></body></html>";
     httpd_resp_set_type(req, "text/html");
@@ -51,6 +71,26 @@ static esp_err_t status_get(httpd_req_t *req)
         (uint32_t)(esp_log_timestamp() / 1000U),
         (uint32_t)esp_get_free_heap_size(),
         (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, n);
+}
+
+// 实时检测结果（JSON）。读 ai 缓存(生产者=main 的 detect_task)，不触发相机/推理，故 handler 轻。
+static esp_err_t detect_get(httpd_req_t *req)
+{
+    ai_result_t r;
+    ai_get_last(&r);
+    char buf[1024];
+    int n = snprintf(buf, sizeof(buf),
+        "{\"w\":%d,\"h\":%d,\"infer_ms\":%u,\"n\":%d,\"boxes\":[",
+        r.src_w, r.src_h, (unsigned)r.infer_ms, r.count);
+    for (int i = 0; i < r.count && n < (int)sizeof(buf) - 96; i++) {
+        n += snprintf(buf + n, sizeof(buf) - n,
+            "%s{\"name\":\"%s\",\"s\":%.2f,\"x1\":%d,\"y1\":%d,\"x2\":%d,\"y2\":%d}",
+            i ? "," : "", ai_class_name(r.boxes[i].cls), r.boxes[i].score,
+            r.boxes[i].x1, r.boxes[i].y1, r.boxes[i].x2, r.boxes[i].y2);
+    }
+    n += snprintf(buf + n, sizeof(buf) - n, "]}");
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, n);
 }
@@ -111,5 +151,7 @@ void net_http_start(void)
     httpd_register_uri_handler(server, &status);
     httpd_uri_t capture = { .uri = "/capture", .method = HTTP_GET, .handler = capture_get };
     httpd_register_uri_handler(server, &capture);
+    httpd_uri_t detect = { .uri = "/detect", .method = HTTP_GET, .handler = detect_get };
+    httpd_register_uri_handler(server, &detect);
     ESP_LOGI(TAG, "http server up -> http://192.168.4.1/");
 }

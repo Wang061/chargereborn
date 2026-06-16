@@ -13,8 +13,9 @@ static const char *TAG = "ai";
 
 static ESPDetDetect    *s_det  = nullptr;
 static SemaphoreHandle_t s_lock = nullptr;
+static ai_result_t       s_last = {};   // 最近一次检测结果缓存（供 /detect 读，避免相机多消费者竞争）
 
-// 调用方持锁；对已 decode 的 img 跑模型并填 out。
+// 调用方持锁；对已 decode 的 img 跑模型并填 out，同时刷新缓存 s_last。
 static void run_img(dl::image::img_t &img, ai_result_t *out) {
     int64_t t0 = esp_timer_get_time();
     auto &results = s_det->run(img);
@@ -28,6 +29,7 @@ static void run_img(dl::image::img_t &img, ai_result_t *out) {
         b->cls = r.category; b->score = r.score;
         b->x1 = r.box[0]; b->y1 = r.box[1]; b->x2 = r.box[2]; b->y2 = r.box[3];
     }
+    s_last = *out;   // 刷新缓存（调用方持锁）
 }
 
 extern "C" esp_err_t ai_init(void) {
@@ -56,6 +58,13 @@ extern "C" esp_err_t ai_detect_oneshot(ai_result_t *out) {
     esp_err_t e = ai_detect_jpeg(fb->buf, fb->len, out);
     camera_return(fb);                            // 与 camera_capture 配对，杜绝帧缓冲泄漏
     return e;
+}
+
+extern "C" void ai_get_last(ai_result_t *out) {
+    if (!out) return;
+    if (s_lock) xSemaphoreTake(s_lock, portMAX_DELAY);
+    *out = s_last;
+    if (s_lock) xSemaphoreGive(s_lock);
 }
 
 extern "C" const char *ai_class_name(int cls) {
