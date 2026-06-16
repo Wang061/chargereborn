@@ -99,7 +99,7 @@ extern "C" {
 #define CAM_PIN_D1       9
 #define CAM_PIN_D0       8
 
-#define CAM_XCLK_HZ     20000000   // 20MHz；飞线不稳降 10000000
+#define CAM_XCLK_HZ     16000000   // 16MHz：启用 ESP32-S3 EDMA 模式、对飞线更友好；不稳降 10000000
 
 // 初始化相机（DVP+SCCB，自动探测传感器）。成功 ESP_OK；失败返回错误码并打印诊断，不 abort。
 esp_err_t cam_init(void);
@@ -155,8 +155,10 @@ esp_err_t cam_init(void)
     }
     sensor_t *s = esp_camera_sensor_get();
     if (s) {
-        ESP_LOGI(TAG, "camera up: sensor PID=0x%02x (OV2640=0x26 OV5640=0x56), JPEG VGA",
-                 s->id.PID);
+        // 用官方枚举宏判别(sensor.h，经 esp_camera.h 引入):OV2640_PID=0x26、OV5640_PID=0x5640
+        const char *name = (s->id.PID == OV2640_PID) ? "OV2640"
+                         : (s->id.PID == OV5640_PID) ? "OV5640" : "other";
+        ESP_LOGI(TAG, "camera up: sensor PID=0x%04x (%s), JPEG VGA", s->id.PID, name);
     }
     return ESP_OK;
 }
@@ -178,9 +180,9 @@ void cam_return(camera_fb_t *fb)
 
 ```yaml
 dependencies:
-  espressif/esp32-camera: "^2.0.0"
+  espressif/esp32-camera: "^2.1.0"   # 解析到当前 2.1.7(依赖 IDF>=5.1, 兼容 5.5);避免回退到早期 2.0.x
 ```
-> 若依赖解析报版本不符,改为 `">=2.0.0"` 或查 `components.espressif.com/components/espressif/esp32-camera` 取兼容 IDF 5.5 的版本。
+> 官方核对(2026-06-16):latest=2.1.7,支持所有 target(含 esp32s3),依赖 ESP-IDF>=5.1。若依赖解析异常,可钉死 `"2.1.7"`。
 
 - [ ] **Step 4: 建 `components/camera/CMakeLists.txt`**
 
@@ -219,7 +221,7 @@ Expected: `managed_components/espressif__esp32-camera/` 被拉下;`Project build
 Run: `$env:ESPPORT='COM7'; powershell -ExecutionPolicy Bypass -File scripts/idf.ps1 flash`(确认后)→ 用 COM11 SerialPort 抓启动日志。
 Expected(无 boot loop):
 ```
-I (xxx) camera: camera up: sensor PID=0x26 (OV2640=0x26 OV5640=0x56), JPEG VGA
+I (xxx) camera: camera up: sensor PID=0x0026 (OV2640), JPEG VGA
 ```
 若 `esp_camera_init failed` / PID=0x00 → 八成接线/供电:核对接线表、检查共地、缩短飞线、必要时降 `CAM_XCLK_HZ`;转 `esp-monitor-triage` 排查,不带病往下。
 
@@ -371,7 +373,8 @@ static esp_err_t stream_get(httpd_req_t *req)
         res = httpd_resp_send_chunk(req, STREAM_BOUNDARY, strlen(STREAM_BOUNDARY));
         if (res == ESP_OK) {
             int hl = snprintf(part, sizeof(part), STREAM_PART, (unsigned)fb->len);
-            res = httpd_resp_send_chunk(req, part, hl);
+            res = (hl > 0 && hl < (int)sizeof(part))   // 防 snprintf 截断
+                ? httpd_resp_send_chunk(req, part, hl) : ESP_FAIL;
         }
         if (res == ESP_OK) {
             res = httpd_resp_send_chunk(req, (const char *)fb->buf, fb->len);
@@ -390,7 +393,7 @@ void net_stream_start(void)
     config.server_port = 81;
     config.ctrl_port   = 32769;     // 与 80 服务默认 ctrl_port(32768) 错开
     config.stack_size  = 8192;      // 流 handler + 相机,留余量防栈溢出
-    config.lru_purge_enable = true;
+    config.lru_purge_enable = true; // 单观看者采集够用;多观看者需调大 max_open_sockets(LRU 可能踢掉活跃流)
     if (httpd_start(&server, &config) != ESP_OK) {
         ESP_LOGE(TAG, "stream httpd_start failed");
         return;
@@ -487,7 +490,7 @@ git commit -m "feat(brain): /stream 81口MJPEG实时取景 + 采集页(取景+�
 | PWDN | NC(-1) | D1 | 9 |
 | RESET | NC(-1) | D0 | 8 |
 | VCC | 3V3 | GND | GND(共地) |
-> XCLK 20MHz;飞线不稳降 10MHz。真相以 `components/camera/include/camera.h` 的 `CAM_PIN_*` 为准。
+> XCLK 16MHz(启用 S3 EDMA);飞线不稳降 10MHz。真相以 `components/camera/include/camera.h` 的 `CAM_PIN_*` 为准。
 ```
 
 - [ ] **Step 2: 提交**
