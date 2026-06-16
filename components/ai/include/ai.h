@@ -30,6 +30,9 @@ esp_err_t ai_detect_oneshot(ai_result_t *out);
 // 类别 id → 人类可读名（占位）。
 const char *ai_class_name(int cls);
 
+// M2 临时自检：对内置测试 jpg 推理（M3 接相机后可删）。
+esp_err_t ai_selftest_builtin(ai_result_t *out);
+
 #ifdef __cplusplus
 }
 #endif

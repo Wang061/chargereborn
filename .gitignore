@@ -6,6 +6,7 @@ sdkconfig.old
 *.elf
 *.bin
 *.map
+*.espdl
 managed_components/
 datasheets/
 

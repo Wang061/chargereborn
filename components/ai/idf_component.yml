@@ -1,0 +1,7 @@
+dependencies:
+  espressif/esp-dl:
+    version: "*"
+    override_path: "D:/WJ/jixiebi/ai/esp-detection/esp-dl/esp-dl"
+  espressif/cat_detect:
+    version: "*"
+    override_path: "D:/WJ/jixiebi/ai/esp-detection/esp-dl/models/cat_detect"
