@@ -36,11 +36,19 @@ _MSYS_KEYS = ["MSYSTEM", "MSYS", "MINGW_PREFIX", "MSYSTEM_PREFIX", "MSYSTEM_CARC
               "MSYSTEM_CHOST", "MINGW_CHOST", "MINGW_PACKAGE_PREFIX"]
 _MSYS_PATH_RE = re.compile(r"(mingw32|mingw64)|((^|[\\/])usr[\\/]bin)|([\\/]msys)", re.I)
 
+# 代理变量：本机带 socks:// 代理时，esp-idf component-manager 的 HTTP 请求会报
+# "Missing dependencies for SOCKS support"（缺 PySocks）→ reconfigure 拉组件元数据失败。
+# 本机直连可达 components 注册表，故 spawn idf 前清掉代理（与 scripts/idf.ps1 可用行为一致）。
+_PROXY_KEYS = ["ALL_PROXY", "HTTP_PROXY", "HTTPS_PROXY", "FTP_PROXY",
+               "all_proxy", "http_proxy", "https_proxy", "ftp_proxy"]
+
 
 def _clean_env():
-    """复制 os.environ，移除 MSYS 标记并从 PATH 剔除 mingw/msys/git-usr 段。"""
+    """复制 os.environ，移除 MSYS 标记、清代理，并从 PATH 剔除 mingw/msys/git-usr 段。"""
     env = dict(os.environ)
     for k in _MSYS_KEYS:
+        env.pop(k, None)
+    for k in _PROXY_KEYS:               # 清代理(socks 会废掉 component-manager 的 HTTP)
         env.pop(k, None)
     path = env.get("PATH") or env.get("Path") or ""
     parts = path.split(";")

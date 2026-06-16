@@ -6,12 +6,12 @@ extern "C" {
 #endif
 
 // ===== 相机接线表（排针 → DevKitC GPIO）。物理杜邦线必须与此表一一对应。=====
-// 安全性：均落在 GPIO4..18，避开 Octal PSRAM 专用 35/36/37、USB-JTAG 19/20、
-//         SPI flash/PSRAM 段 26..37、strapping 0/3/45/46。（已经官方 datasheet 核对）
-// PWDN/RESET 不接（-1，用 SCCB 软复位）。飞线不稳：先降 CAM_XCLK_HZ→10MHz，再降分辨率。
-#define CAM_PIN_PWDN    (-1)
-#define CAM_PIN_RESET   (-1)
-#define CAM_PIN_XCLK    15
+// 目标模块: 正点原子 ATK-OV2640(板载 24MHz 有源晶振自时钟,排针无 XCLK 脚)。
+// 安全性: 所用脚均避开 Octal PSRAM 35/36/37、USB-JTAG 19/20、flash/PSRAM 26..37、strapping 0/3/45/46。
+// XCLK 不接(模块自时钟)→ -1;PWDN/RESET 接 GPIO,由驱动做上电+复位脉冲(检测最稳)。
+#define CAM_PIN_PWDN    15      // ATK PWDN→GPIO15(驱动拉低上电)
+#define CAM_PIN_RESET   21      // ATK RST →GPIO21(驱动复位脉冲)
+#define CAM_PIN_XCLK    (-1)    // 模块自带 24MHz 晶振,无 XCLK 脚 → -1(驱动跳过 XCLK 生成)
 #define CAM_PIN_SIOD     4   // SCCB SDA
 #define CAM_PIN_SIOC     5   // SCCB SCL
 #define CAM_PIN_VSYNC    6
@@ -26,7 +26,7 @@ extern "C" {
 #define CAM_PIN_D1       9
 #define CAM_PIN_D0       8
 
-#define CAM_XCLK_HZ     16000000   // 16MHz：启用 ESP32-S3 EDMA 模式、对飞线更友好；不稳降 10000000
+#define CAM_XCLK_HZ     24000000   // ATK 模块真实晶振 24MHz(pin_xclk=-1 不输出,仅供采样时序参考)
 #define CAM_JPEG_QUALITY 12        // JPEG 质量 0-63，越小越清
 #define CAM_FB_COUNT     2         // 帧缓冲数；JPEG 模式 >1 → 连续取流更顺
 

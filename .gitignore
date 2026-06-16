@@ -7,6 +7,7 @@ sdkconfig.old
 *.bin
 *.map
 managed_components/
+datasheets/
 
 # ===== harness 运行时 =====
 logs/
