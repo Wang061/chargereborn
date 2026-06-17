@@ -68,5 +68,5 @@ extern "C" void ai_get_last(ai_result_t *out) {
 }
 
 extern "C" const char *ai_class_name(int cls) {
-    return (cls == 0) ? "cat" : "obj";   // 占位（M5 换电池模型时改这张表）
+    return (cls == 0) ? "18650" : "obj";   // 单类 18650 模型(M5);多类在此扩表
 }
