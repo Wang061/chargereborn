@@ -56,7 +56,7 @@ static esp_err_t root_get(httpd_req_t *req)
         "function poll(){fetch('/detect').then(function(r){return r.json();}).then(draw).catch(function(){});}"
         "function dtog(){var b=document.getElementById('det');"
         "if(dt){clearInterval(dt);dt=null;b.textContent='识别开始';return;}"
-        "dt=setInterval(poll,700);b.textContent='识别停止';}"
+        "dt=setInterval(poll,300);b.textContent='识别停止';}"
         "document.getElementById('v').src='http://'+location.hostname+':81/stream';"
         "</script></body></html>";
     httpd_resp_set_type(req, "text/html");

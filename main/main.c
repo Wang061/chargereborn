@@ -10,22 +10,27 @@
 
 static const char *TAG = "main";
 
-// 后台检测任务：周期抓相机帧→推理→日志。
+// 后台检测任务：尽量快地抓帧→推理→刷新缓存(供 /detect)；串口日志限速 1Hz 防刷屏。
 // 栈 8192：esp-dl run 调用栈较深 + 首帧含模型加载；优先级 3：低于 WiFi(23)/httpd，不抢网络。
 static void detect_task(void *arg)
 {
     (void)arg;
     ai_result_t r;
+    uint32_t last_log = 0;
     while (1) {
         if (ai_detect_oneshot(&r) == ESP_OK) {
-            ESP_LOGI(TAG, "detect: n=%d infer=%ums", r.count, r.infer_ms);
-            for (int i = 0; i < r.count; i++) {
-                ESP_LOGI(TAG, "  #%d %s %.2f [%d,%d,%d,%d]", i,
-                         ai_class_name(r.boxes[i].cls), r.boxes[i].score,
-                         r.boxes[i].x1, r.boxes[i].y1, r.boxes[i].x2, r.boxes[i].y2);
+            uint32_t now = esp_log_timestamp();
+            if (now - last_log >= 1000) {   // 日志限速 ~1Hz（检测本身更快，仅日志降频）
+                last_log = now;
+                ESP_LOGI(TAG, "detect: n=%d infer=%ums", r.count, r.infer_ms);
+                for (int i = 0; i < r.count; i++) {
+                    ESP_LOGI(TAG, "  #%d %s %.2f [%d,%d,%d,%d]", i,
+                             ai_class_name(r.boxes[i].cls), r.boxes[i].score,
+                             r.boxes[i].x1, r.boxes[i].y1, r.boxes[i].x2, r.boxes[i].y2);
+                }
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(500));   // ~2Hz，留 CPU 给 WiFi/图传
+        vTaskDelay(pdMS_TO_TICKS(50));   // 检测节流 50ms；+推理~220ms ≈ 3.5Hz（留 CPU 给图传）
     }
 }
 
