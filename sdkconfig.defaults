@@ -13,9 +13,8 @@ CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
 # ---- 调试期友好（栈溢出检测；panic 默认打印寄存器+回溯后重启）----
 CONFIG_COMPILER_STACK_CHECK_MODE_NORM=y
 
-# ---- esp-dl ESPDet 模型嵌入 app rodata ----
-# 注: cat_detect 0.1.1 的 flash_partition CMake 调 add_cat_target,在本地 esp-dl 3.3.5 下该宏已移除/改名 → 配置报错。
-# 故用 rodata(cat 例程默认且已验证的路径);espdet_det 分区暂保留给 M5 换电池模型时再评估。
+# ---- esp-dl ESPDet 模型嵌入 app rodata（M5 单类 18650 模型）----
+# 注: <model>_detect 的 flash_partition CMake 调 add_<model>_target,在本地 esp-dl 3.3.5 下该宏已移除 → 配置报错;故用 rodata(已验证)。
 CONFIG_ESPDET_DETECT_MODEL_IN_FLASH_RODATA=y
-CONFIG_FLASH_ESPDET_PICO_224_224_CAT=y
-CONFIG_ESPDET_PICO_224_224_CAT=y
+CONFIG_FLASH_ESPDET_PICO_224_224_BATTERY=y
+CONFIG_ESPDET_PICO_224_224_BATTERY=y

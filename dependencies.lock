@@ -1,11 +1,11 @@
 dependencies:
-  espressif/cat_detect:
+  espressif/battery_detect:
     dependencies:
     - name: espressif/esp-dl
       override_path: ../../esp-dl
       version: ^3.1.3
     source:
-      path: D:\WJ\jixiebi\ai\esp-detection\esp-dl\models\cat_detect
+      path: D:\WJ\jixiebi\ai\esp-detection\esp-dl\models\battery_detect
       type: local
     version: 0.1.1
   espressif/dl_fft:
@@ -94,9 +94,9 @@ dependencies:
       type: idf
     version: 5.5.4
 direct_dependencies:
-- espressif/cat_detect
+- espressif/battery_detect
 - espressif/esp-dl
 - espressif/esp32-camera
-manifest_hash: 96aa7428b37def5c5e38cc91abaed2266d6bd304baa9574bd4998c7b24fcd456
+manifest_hash: dd083df1615ffcd2b457222e633e3ec794b2d8ddf2c239512a3f222ccac5911e
 target: esp32s3
 version: 2.0.0
