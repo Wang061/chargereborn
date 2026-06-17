@@ -28,7 +28,7 @@ extern "C" {
 
 #define CAM_XCLK_HZ     24000000   // ATK 模块真实晶振 24MHz(pin_xclk=-1 不输出,仅供采样时序参考)
 #define CAM_JPEG_QUALITY 12        // JPEG 质量 0-63，越小越清
-#define CAM_FB_COUNT     2         // 帧缓冲数；JPEG 模式 >1 → 连续取流更顺
+#define CAM_FB_COUNT     3         // 帧缓冲数；JPEG 模式 >1 → 连续取流更顺；3 张减少图传与推理抢帧
 
 // 注意：函数名用 camera_ 前缀。托管组件 esp32-camera 的私有 HAL(cam_hal.c)已导出
 //       全局符号 cam_init/cam_deinit，裸用 cam_ 前缀会在链接期符号冲突(multiple definition)。
