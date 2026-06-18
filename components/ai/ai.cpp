@@ -1,4 +1,5 @@
 #include "ai.h"
+#include "battery_angle.h"
 #include "espdet_detect.hpp"
 #include "dl_image_jpeg.hpp"
 #include "camera.h"
@@ -28,6 +29,11 @@ static void run_img(dl::image::img_t &img, ai_result_t *out) {
         ai_box_t *b = &out->boxes[out->count++];
         b->cls = r.category; b->score = r.score;
         b->x1 = r.box[0]; b->y1 = r.box[1]; b->x2 = r.box[2]; b->y2 = r.box[3];
+        // 角度估计：img 已是解码后 RGB888 且在作用域内，零拷贝；框为源像素坐标
+        battery_angle_t a = battery_angle_estimate((const uint8_t *)img.data, img.width, img.height,
+                                                   b->x1, b->y1, b->x2, b->y2);
+        b->angle_deg  = a.valid ? a.angle_deg : -1.0f;
+        b->anisotropy = a.anisotropy;
     }
     s_last = *out;   // 刷新缓存（调用方持锁）
 }

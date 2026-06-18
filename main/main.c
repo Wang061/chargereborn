@@ -7,6 +7,7 @@
 #include "net.h"
 #include "camera.h"
 #include "ai.h"
+#include "armlink.h"
 
 static const char *TAG = "main";
 
@@ -19,6 +20,7 @@ static void detect_task(void *arg)
     uint32_t last_log = 0;
     while (1) {
         if (ai_detect_oneshot(&r) == ESP_OK) {
+            armlink_update_from_ai(&r);   // 选最佳电池框 → 刷新机械臂目标缓存（UART 默认关）
             uint32_t now = esp_log_timestamp();
             if (now - last_log >= 1000) {   // 日志限速 ~1Hz（检测本身更快，仅日志降频）
                 last_log = now;
@@ -50,6 +52,7 @@ void app_main(void)
     if (ai_init() != ESP_OK) {
         ESP_LOGW(TAG, "ai init failed — 推理不可用，继续运行");
     } else {
+        armlink_init();   // 机械臂目标产出器（UART 默认关，不驱动真臂）
         xTaskCreate(detect_task, "detect", 8192, NULL, 3, NULL);
     }
 

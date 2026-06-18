@@ -8,6 +8,7 @@
 #include <string.h>
 #include "camera.h"
 #include "ai.h"
+#include "armlink.h"
 
 static const char *TAG = "http_srv";
 
@@ -52,7 +53,12 @@ static esp_err_t root_get(httpd_req_t *req)
         "for(var i=0;i<d.boxes.length;i++){var b=d.boxes[i];"
         "var x=b.x1*sx,y=b.y1*sy;"
         "g.strokeRect(x,y,(b.x2-b.x1)*sx,(b.y2-b.y1)*sy);"
-        "g.fillText(b.name+' '+b.s.toFixed(2),x+2,y>14?y-3:y+12);}}"
+        "g.fillText(b.name+' '+b.s.toFixed(2),x+2,y>14?y-3:y+12);"
+        "if(b.a>=0){var cxp=(b.x1+b.x2)/2*sx,cyp=(b.y1+b.y2)/2*sy,"
+        "th=b.a*Math.PI/180,L=Math.max((b.x2-b.x1)*sx,(b.y2-b.y1)*sy),"
+        "dx=Math.cos(th)*L/2,dy=Math.sin(th)*L/2;"
+        "g.strokeStyle='#f00';g.beginPath();g.moveTo(cxp-dx,cyp-dy);g.lineTo(cxp+dx,cyp+dy);g.stroke();"
+        "g.strokeStyle='#0f0';g.fillText(b.a.toFixed(0),cxp+4,cyp-4);}}}"
         "function poll(){fetch('/detect').then(function(r){return r.json();}).then(draw).catch(function(){});}"
         "function dtog(){var b=document.getElementById('det');"
         "if(dt){clearInterval(dt);dt=null;b.textContent='识别开始';return;}"
@@ -80,17 +86,39 @@ static esp_err_t detect_get(httpd_req_t *req)
 {
     ai_result_t r;
     ai_get_last(&r);
-    char buf[1024];
+    char buf[1536];
     int n = snprintf(buf, sizeof(buf),
         "{\"w\":%d,\"h\":%d,\"infer_ms\":%u,\"n\":%d,\"boxes\":[",
         r.src_w, r.src_h, (unsigned)r.infer_ms, r.count);
-    for (int i = 0; i < r.count && n < (int)sizeof(buf) - 96; i++) {
+    for (int i = 0; i < r.count && n < (int)sizeof(buf) - 128; i++) {
         n += snprintf(buf + n, sizeof(buf) - n,
-            "%s{\"name\":\"%s\",\"s\":%.2f,\"x1\":%d,\"y1\":%d,\"x2\":%d,\"y2\":%d}",
+            "%s{\"name\":\"%s\",\"s\":%.2f,\"x1\":%d,\"y1\":%d,\"x2\":%d,\"y2\":%d,\"a\":%.1f,\"aniso\":%.2f}",
             i ? "," : "", ai_class_name(r.boxes[i].cls), r.boxes[i].score,
-            r.boxes[i].x1, r.boxes[i].y1, r.boxes[i].x2, r.boxes[i].y2);
+            r.boxes[i].x1, r.boxes[i].y1, r.boxes[i].x2, r.boxes[i].y2,
+            r.boxes[i].angle_deg, r.boxes[i].anisotropy);
     }
     n += snprintf(buf + n, sizeof(buf) - n, "]}");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, n);
+}
+
+// 机械臂目标（JSON）。读 armlink 缓存（生产者=detect_task），不触发相机/推理。
+static esp_err_t arm_target_get(httpd_req_t *req)
+{
+    arm_target_t t;
+    armlink_get_last_target(&t);
+    char buf[256];
+    int n;
+    if (t.valid) {
+        // wrist_deg 本步未标定，恒输出 null（标定后改真实值）
+        n = snprintf(buf, sizeof(buf),
+            "{\"valid\":true,\"cx\":%.1f,\"cy\":%.1f,\"angle_deg\":%.1f,\"score\":%.2f,"
+            "\"wrist_deg\":null,\"w\":%u,\"h\":%u,\"frame_id\":%u}",
+            t.center_x_px, t.center_y_px, t.angle_deg, t.score,
+            (unsigned)t.src_w, (unsigned)t.src_h, (unsigned)t.frame_id);
+    } else {
+        n = snprintf(buf, sizeof(buf), "{\"valid\":false,\"frame_id\":%u}", (unsigned)t.frame_id);
+    }
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, n);
 }
@@ -141,6 +169,7 @@ void net_http_start(void)
 {
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.stack_size = 8192;   // 默认 4096 不够: detect_get 的 buf[1536]+ai_result_t 会撑爆 httpd 任务栈 → 卡死/崩溃
     if (httpd_start(&server, &config) != ESP_OK) {
         ESP_LOGE(TAG, "httpd_start failed");
         return;
@@ -153,5 +182,7 @@ void net_http_start(void)
     httpd_register_uri_handler(server, &capture);
     httpd_uri_t detect = { .uri = "/detect", .method = HTTP_GET, .handler = detect_get };
     httpd_register_uri_handler(server, &detect);
+    httpd_uri_t arm = { .uri = "/arm_target", .method = HTTP_GET, .handler = arm_target_get };
+    httpd_register_uri_handler(server, &arm);
     ESP_LOGI(TAG, "http server up -> http://192.168.4.1/");
 }

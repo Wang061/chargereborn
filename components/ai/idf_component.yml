@@ -1,6 +1,6 @@
 dependencies:
-  # esp-dl(43.5MB 第三方库)走 registry + dependencies.lock 复现, 不 vendor 进仓
+  # esp-dl(43.5MB 第三方库)走 registry + dependencies.lock 复现, 不 vendor 进仓。
+  # (2026-06-18 板上 A/B 实测: registry 3.3.5 与本地 override 3.3.5 推理逐框分数完全一致 → 自包含安全)
   espressif/esp-dl:
     version: "==3.3.5"
-  # battery_detect(自训 18650 模型, 参赛交付物)已 vendored 为本地组件 components/battery_detect/
-  # → IDF 自动发现, 由本组件 CMakeLists.txt 的 REQUIRES battery_detect 引用, 不在此声明为 managed 依赖
+  # battery_detect(自训 18650 模型)已 vendored 为本地组件 components/battery_detect/，IDF 自动发现，不在此声明

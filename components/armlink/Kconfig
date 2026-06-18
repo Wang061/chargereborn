@@ -1,0 +1,48 @@
+menu "armlink (机械臂通信桩)"
+
+    config ARMLINK_UART_ENABLE
+        bool "启用 UART 发送 (会驱动机械臂!)"
+        default n
+        help
+            默认关。开启后 armlink 通过 UART 把目标指令发给 KM1 Steward，
+            可能驱动舵机运动。启用前必须填 docs/ai/SAFETY.md 并分配 TX 引脚。
+
+    config ARMLINK_UART_PORT_NUM
+        int "UART 端口号"
+        depends on ARMLINK_UART_ENABLE
+        default 1
+        help
+            用 UART1，避开 UART0(主 console)。
+
+    config ARMLINK_UART_TX_GPIO
+        int "TX GPIO (-1=未分配, 拒绝初始化)"
+        depends on ARMLINK_UART_ENABLE
+        default -1
+        help
+            发送脚。默认 -1 强制显式分配；避开 35/36/37(PSRAM)、0/3/45/46(strapping)、19/20(USB-JTAG)。
+
+    config ARMLINK_UART_RX_GPIO
+        int "RX GPIO (-1=不接)"
+        depends on ARMLINK_UART_ENABLE
+        default -1
+        help
+            KM1 单向下发可不接 RX。
+
+    config ARMLINK_UART_BAUD
+        int "波特率"
+        depends on ARMLINK_UART_ENABLE
+        default 115200
+
+    choice ARMLINK_PROTO
+        prompt "发送协议"
+        depends on ARMLINK_UART_ENABLE
+        default ARMLINK_PROTO_KMS
+        help
+            KMS = $KMS:x,y,z,t! (Steward 自做 IK)；WRIST_SERVO = {#004P..T..!} (裸腕角)。
+        config ARMLINK_PROTO_KMS
+            bool "$KMS: 坐标(Steward IK)"
+        config ARMLINK_PROTO_WRIST_SERVO
+            bool "裸腕舵机角"
+    endchoice
+
+endmenu

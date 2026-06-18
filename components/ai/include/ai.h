@@ -11,7 +11,9 @@ extern "C" {
 typedef struct {
     int   cls;            // 类别 id
     float score;          // 置信度 0..1
-    int   x1, y1, x2, y2; // 框（模型输入坐标系，左上/右下，像素）
+    int   x1, y1, x2, y2; // 框（640x480 源像素坐标，左上/右下；已反映射回源帧）
+    float angle_deg;      // 电池长轴 vs 图像 +x 轴，[0,180)，y 向下；<0 = 无效
+    float anisotropy;     // 角度置信 0..1（结构张量各向异性，越大越可信）
 } ai_box_t;
 
 typedef struct {
