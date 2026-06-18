@@ -26,3 +26,12 @@
 -->
 
 （暂无真实条目——首个 bug 修复后由 /learn 写入。）
+
+---
+
+### /detect 轮询卡死 / httpd 任务栈溢出  (2026-06-18)
+- 症状: 浏览器点"识别开始"(每 180ms 轮询 `/detect`)即卡死/视频冻结;`detect_task` 串口仍正常打印(板不一定复位)。
+- 根因: `detect_get` handler 栈占用超 httpd 默认 4096 栈。`ai_box_t` 加 `angle_deg/anisotropy` 后 `ai_result_t r`≈336B + `char buf[1024→1536]` ≈ 1872B 局部 + httpd 框架开销 → 撑爆 4096。
+- 修法: `net_http_start()` 加 `config.stack_size = 8192;`(components/net/http_srv.c)。与 81 口 stream server 一致。
+- 预防: 在 httpd handler 放大局部缓冲/结构体前核对 `HTTPD_DEFAULT_CONFIG().stack_size`(=4096);大缓冲用 static/堆;改 `ai_result_t`/`ai_box_t` 体积时注意所有栈上拷贝点。
+- 标签: #stack #httpd #freertos
