@@ -1,7 +1,6 @@
 dependencies:
+  # esp-dl(43.5MB 第三方库)走 registry + dependencies.lock 复现, 不 vendor 进仓
   espressif/esp-dl:
-    version: "*"
-    override_path: "D:/WJ/jixiebi/ai/esp-detection/esp-dl/esp-dl"
-  espressif/battery_detect:
-    version: "*"
-    override_path: "D:/WJ/jixiebi/ai/esp-detection/esp-dl/models/battery_detect"
+    version: "==3.3.5"
+  # battery_detect(自训 18650 模型, 参赛交付物)已 vendored 为本地组件 components/battery_detect/
+  # → IDF 自动发现, 由本组件 CMakeLists.txt 的 REQUIRES battery_detect 引用, 不在此声明为 managed 依赖

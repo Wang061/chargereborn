@@ -1,7 +1,8 @@
 # 18650 检测模型 · 训练→量化→部署 流水线 (MODEL_PIPELINE)
 
-> M5 自训 18650 检测器的完整复现记录。**关键:模型与多数修复在工程仓库外**
-> (`D:\WJ\jixiebi\ai\esp-detection`,非 git),本文是唯一记录。下一步应 vendored 进仓。
+> M5 自训 18650 检测器的完整复现记录。**固件侧已 vendored 自包含**(2026-06-18):
+> 模型组件在 `components/battery_detect/`、esp-dl 走 registry `==3.3.5`(`dependencies.lock` 锁定)、build 绿。
+> **训练/量化工作区仍在仓外** `D:\WJ\jixiebi\ai\esp-detection`(非 git;重训/重量化才需要),本文是其唯一记录。
 > 训练环境: conda env `chargereborn`(`D:\WJ\jixiebi\ai\envs\chargereborn`),见 `mem:ai-training-env`。
 
 ## 0. 结果
@@ -45,13 +46,14 @@ python espdet_run.py --class_name battery --pretrained_path None ^
 
 ## 4. 部署到固件
 1. 量化好的 espdl 在 `esp-dl\models\battery_detect\models\s3\espdet_pico_224_224_battery.espdl`。
-2. `components/ai` 经 `idf_component.yml` 的 **override_path** 指向外部 battery_detect(+esp-dl),rodata 内嵌模型。
+2. **已 vendored**: 模型组件在本地 `components/battery_detect/`(IDF 自动发现),`components/ai` 经 `REQUIRES battery_detect` 引用;esp-dl 走 registry `==3.3.5`。rodata 内嵌模型(`build/espdl_models/battery_detect.espdl`)。
 3. `sdkconfig.defaults`: `CONFIG_ESPDET_DETECT_MODEL_IN_FLASH_RODATA / FLASH_ESPDET_PICO_224_224_BATTERY / ESPDET_PICO_224_224_BATTERY`。
-4. build(proxy 清空 + `scripts/idf.ps1`)→ flash(COM7)→ 测(COM6 串口 / 浏览器 192.168.4.1)。
+4. build(proxy 清空 + `scripts/idf.ps1` 或 idf-bridge)→ flash(COM7)→ 测(COM11 串口日志 / 浏览器 192.168.4.1)。
 
-## 5. ⚠️ 复现风险 / 下一步
-- **模型 + §3 所有修复都在 git 仓库外**。ai/ 目录一动就不可复现。
-- **下一步必须 vendored**: 把 `battery_detect`(含修好的 cpp/hpp/Kconfig/CMake + espdl)拷进 `components/`,`*.espdl` 解除 gitignore(模型是参赛交付物),去掉 override_path 外部耦合 → 仓库自包含、评委可复现。
+## 5. 复现状态
+- ✅ **固件侧自包含(2026-06-18 完成)**: `battery_detect`(修好的 cpp/hpp/Kconfig/CMake + espdl)已 vendored 进 `components/battery_detect/`;`*.espdl` 解除 gitignore(交付物入库);两个 override_path 去掉(esp-dl→registry `==3.3.5`+lock,battery_detect→本地组件)。**build 绿、`dependencies.lock` 无 ai/ 外部路径**,评委 clone 即 build。
+  - 板上识别复验(识别不变)待补: `$env:ESPPORT='COM7'; scripts/idf.ps1 flash` → COM11 看日志。
+- ⚠️ **训练/量化复现仍需仓外工作区**: §3 训练侧修复(esp_head/train/quantize)在 `ai/esp-detection`,重训/重量化才需要;部署侧修复(espdet_detect.cpp/hpp)已随 vendored 组件入库。
 
 ## 6. 提升精度/速度的后手(按需)
 - 置信度更高: QAT(蓝图正解)/ 基于预训练 espdet 微调 / 更多数据。
