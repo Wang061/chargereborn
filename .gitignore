@@ -20,6 +20,11 @@ logs/
 .claude/.loop_active
 .claude/settings.local.json
 
+# ===== IDE / 工具缓存（clangd 索引等，勿入库）=====
+.cache/
+.serena/cache/
+compile_commands.json
+
 # ===== Python =====
 __pycache__/
 *.pyc
