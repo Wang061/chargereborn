@@ -13,12 +13,16 @@ sdkconfig.old
 managed_components/
 datasheets/
 
+# ===== 本地开发环境 / 私有内容（不入库）=====
+.claude/
+.mcp.json
+_research/
+计划.docx
+
 # ===== harness 运行时 =====
 logs/
 .venv-tools/
 .venv/
-.claude/.loop_active
-.claude/settings.local.json
 
 # ===== IDE / 工具缓存（clangd 索引等，勿入库）=====
 .cache/
