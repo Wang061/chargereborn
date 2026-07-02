@@ -96,6 +96,45 @@ static bool acquire_pose(float *out_px, float *out_py, float *out_ang)
     return true;
 }
 
+// 世界长轴角 -> 腕#004 PWM。抓取时腕轴需对齐电池长轴(垂直于长轴夹取)。
+// 注: spec §4.4 的"减去抓取点方位角(底座旋转)"耦合在此折进经验 wrist_zero_deg —
+// 与 OpenMV 参考(get_grip_angle_deg 用经验偏移,不显式减方位角)一致,G1 标定 wrist_zero_deg 时一并吸收。
+static int wrist_pwm_for_angle(float world_ang_deg)
+{
+    // 归一化到 [-90,90]
+    float a = world_ang_deg + s_cal.wrist_zero_deg;
+    while (a >= 90.0f) a -= 180.0f;
+    while (a < -90.0f) a += 180.0f;
+    int pwm = s_cal.wrist_center_pwm + (int)(a * s_cal.wrist_k);
+    return armlink_clamp_pwm(pwm);
+}
+
+// 抓取序列: 正上方悬停(可急停) -> 预降 -> 腕对齐 -> 最终下降 -> 夹 -> 抬到carry。
+static esp_err_t pick_sequence(float mm_x, float mm_y, float world_ang)
+{
+    float pre_z = s_cal.pick_z + 20.0f;   // 预抓高度(pick 上方 20mm)
+    if (pre_z > s_cal.approach_z) pre_z = s_cal.approach_z;
+
+    armctrl_move_servo(5, s_cal.gripper_open_pwm, s_cal.gripper_time_ms);   // 确保开爪
+
+    // 1. 目标正上方安全高度悬停(G<=2 时此处人可急停确认)
+    if (armctrl_move_arm(mm_x, mm_y, s_cal.approach_z, 1500) != ESP_OK) return ESP_FAIL;
+    // 2. 腕对齐长轴
+    armctrl_move_servo(4, wrist_pwm_for_angle(world_ang), 800);
+    // 3. 预降
+    if (armctrl_move_arm(mm_x, mm_y, pre_z, 1200) != ESP_OK) return ESP_FAIL;
+    // 4. 最终下降到抓取高度
+    if (armctrl_move_arm(mm_x, mm_y, s_cal.pick_z, 1400) != ESP_OK) return ESP_FAIL;
+    // 5. 夹爪闭合
+    armctrl_move_servo(5, s_cal.gripper_close_pwm, s_cal.gripper_time_ms);
+    // 6. 抬起到搬运高度
+    if (armctrl_move_arm(mm_x, mm_y, s_cal.carry_z, 1400) != ESP_OK) return ESP_FAIL;
+    // 7. 腕回中位(搬运姿态)
+    armctrl_move_servo(4, s_cal.wrist_center_pwm, 800);
+    ESP_LOGI(TAG, "抓取序列完成");
+    return ESP_OK;
+}
+
 // 回观察位(先中转点消回差, 再到观察位), 腕中位 + 开爪。
 static void go_observe(void)
 {
@@ -124,7 +163,20 @@ static void armctrl_task(void *arg)
         homography_apply(s_cal.H, px, py, &mm_x, &mm_y);
         float world_ang = homography_angle(s_cal.H, ang);
         ESP_LOGI(TAG, "定位: px(%.1f,%.1f)->mm(%.1f,%.1f) angW=%.1f", px, py, mm_x, mm_y, world_ang);
-        // T10 在此填抓取序列; 本步先打印定位并停。
+        if (pick_sequence(mm_x, mm_y, world_ang) != ESP_OK) {
+            ESP_LOGW(TAG, "抓取失败, 回观察位");
+            go_observe(); s_run = false; continue;
+        }
+        if (s_grade < 4) {
+            // G3: 抓起后直接放回原位验证抓取(不切割)
+            armctrl_move_arm(mm_x, mm_y, s_cal.place_z, 1400);
+            armctrl_move_servo(5, s_cal.gripper_open_pwm, s_cal.gripper_time_ms);
+            go_observe();
+            s_run = false;
+            continue;
+        }
+        // T11 在此填 G4 切割+放回; 本步 G4 暂同 G3。
+        go_observe();
         s_run = false;
         vTaskDelay(pdMS_TO_TICKS(200));
     }
