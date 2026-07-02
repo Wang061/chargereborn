@@ -30,6 +30,11 @@ static esp_err_t root_get(httpd_req_t *req)
         "<div><button id=det onclick='dtog()'>识别开始</button> <span id=ds>-</span></div>"
         "<div style='margin:6px'><button onclick='atest()'>机械臂测试帧</button> "
         "<button id=auto onclick='atog()'>自动跟踪:关</button> <span id=as>-</span></div>"
+        "<div style='margin:6px'>G级 <select id=gr onchange='gset()'>"
+        "<option value=0>G0</option><option value=1>G1</option><option value=2>G2</option>"
+        "<option value=3>G3</option><option value=4>G4</option></select> "
+        "<button onclick='arun(1)'>抓取启动</button> "
+        "<button onclick='arun(0)'>停止</button> <span id=gs>-</span></div>"
         "<p style='position:relative;display:inline-block;line-height:0'>"
         "<img id=v style='max-width:96vw;display:block'>"
         "<canvas id=ov style='position:absolute;left:0;top:0;pointer-events:none'></canvas>"
@@ -75,6 +80,11 @@ static esp_err_t root_get(httpd_req_t *req)
         "var b=document.getElementById('auto');"
         "b.textContent='自动跟踪:'+(d2.auto_send?'开':'关');"
         "document.getElementById('as').textContent=d2.auto_send?'自动驱动臂中':'已停自动';});});}"
+        "function gset(){var g=document.getElementById('gr').value;"
+        "fetch('/arm_grade?g='+g).then(function(r){return r.json();}).then(function(d){"
+        "document.getElementById('gs').textContent='grade='+d.grade;});}"
+        "function arun(on){fetch('/arm_run?on='+on).then(function(r){return r.json();}).then(function(d){"
+        "document.getElementById('gs').textContent=d.running?'循环运行中':'已停止';});}"
         "document.getElementById('v').src='http://'+location.hostname+':81/stream';"
         "</script></body></html>";
     httpd_resp_set_type(req, "text/html");

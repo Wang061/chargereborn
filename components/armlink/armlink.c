@@ -82,19 +82,7 @@ void armlink_update_from_ai(const ai_result_t *r)
     s_last = t;
     xSemaphoreGive(s_lock);
 
-#if CONFIG_ARMLINK_UART_ENABLE
-    // 仅当运行时开关开启才自动发送（默认关，避免首次上电连续驱动机械臂）
-    if (s_auto_send && t.valid) {
-        char cmd[64];
-        int len =
-#if CONFIG_ARMLINK_PROTO_WRIST_SERVO
-            armlink_encode_wrist_servo(&t, cmd, sizeof(cmd));
-#else
-            armlink_encode_kms(&t, cmd, sizeof(cmd));
-#endif
-        if (len > 0) armlink_uart_send(cmd, len);
-    }
-#endif
+    // 驱动权移交 armctrl 状态机(Phase2): 此处只更新目标缓存, 不再直接发帧。
 }
 
 void armlink_get_last_target(arm_target_t *out)
