@@ -1,7 +1,9 @@
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
+#ifndef ARMCAL_HOST_TEST
 #include "esp_err.h"
+#endif
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -26,8 +28,15 @@ typedef struct {
 #define ARMCAL_MAGIC 0x41430201u  // 'AC' + ver 02 01
 
 void armcal_defaults(armcal_t *c);
+#ifndef ARMCAL_HOST_TEST
 esp_err_t armcal_load(armcal_t *out);
 esp_err_t armcal_save(const armcal_t *c);
+#endif
+
+// 单应性像素->台面mm。H 行主序 9 元。
+void homography_apply(const float H[9], float px, float py, float *mm_x, float *mm_y);
+// 图像长轴角(deg)->世界角(deg): 用 H 的 2x2 线性部分变换方向向量。
+float homography_angle(const float H[9], float img_angle_deg);
 
 #ifdef __cplusplus
 }
