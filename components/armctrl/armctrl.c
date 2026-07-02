@@ -58,6 +58,44 @@ void armctrl_move_servo(int idx, int pwm, int move_ms)
 #endif
 }
 
+#define POSE_FRAMES 5
+#define POSE_INTERVAL_MS 60
+#define POSE_CENTER_RANGE_PX 4.0f
+#define POSE_ANGLE_RANGE_DEG 12.0f
+
+// 连续读 N 帧目标缓存, 抖动超门限判失败, 否则输出中心/角度均值。
+static bool acquire_pose(float *out_px, float *out_py, float *out_ang)
+{
+    float cx[POSE_FRAMES], cy[POSE_FRAMES], ang[POSE_FRAMES];
+    for (int i = 0; i < POSE_FRAMES; i++) {
+        arm_target_t t;
+        armlink_get_last_target(&t);
+        if (!t.valid) { ESP_LOGW(TAG, "pose: 第%d帧无目标", i); return false; }
+        cx[i] = t.center_x_px; cy[i] = t.center_y_px; ang[i] = t.angle_deg;
+        vTaskDelay(pdMS_TO_TICKS(POSE_INTERVAL_MS));
+    }
+    float minx = cx[0], maxx = cx[0], miny = cy[0], maxy = cy[0];
+    float mina = ang[0], maxa = ang[0], sx = 0, sy = 0, sa = 0;
+    for (int i = 0; i < POSE_FRAMES; i++) {
+        if (cx[i] < minx) minx = cx[i];
+        if (cx[i] > maxx) maxx = cx[i];
+        if (cy[i] < miny) miny = cy[i];
+        if (cy[i] > maxy) maxy = cy[i];
+        if (ang[i] < mina) mina = ang[i];
+        if (ang[i] > maxa) maxa = ang[i];
+        sx += cx[i]; sy += cy[i]; sa += ang[i];
+    }
+    if ((maxx - minx) > POSE_CENTER_RANGE_PX || (maxy - miny) > POSE_CENTER_RANGE_PX) {
+        ESP_LOGW(TAG, "pose: 中心抖动 %.1f,%.1f", maxx - minx, maxy - miny); return false;
+    }
+    if ((maxa - mina) > POSE_ANGLE_RANGE_DEG) {
+        ESP_LOGW(TAG, "pose: 角度抖动 %.1f", maxa - mina); return false;
+    }
+    *out_px = sx / POSE_FRAMES; *out_py = sy / POSE_FRAMES; *out_ang = sa / POSE_FRAMES;
+    ESP_LOGI(TAG, "pose ok px=%.1f py=%.1f ang=%.1f", *out_px, *out_py, *out_ang);
+    return true;
+}
+
 // 回观察位(先中转点消回差, 再到观察位), 腕中位 + 开爪。
 static void go_observe(void)
 {
@@ -78,8 +116,16 @@ static void armctrl_task(void *arg)
         }
         // T9-T11 在此填: 观察→定位→抓→切→放→回观察; 本步先回观察位并停。
         go_observe();
-        ESP_LOGI(TAG, "(骨架)已回观察位; 抓取序列待 T9-T11 填");
-        s_run = false;   // 骨架跑一次即停
+        float px, py, ang;
+        if (!acquire_pose(&px, &py, &ang)) {
+            ESP_LOGW(TAG, "位姿不稳, 重试"); vTaskDelay(pdMS_TO_TICKS(300)); continue;
+        }
+        float mm_x, mm_y;
+        homography_apply(s_cal.H, px, py, &mm_x, &mm_y);
+        float world_ang = homography_angle(s_cal.H, ang);
+        ESP_LOGI(TAG, "定位: px(%.1f,%.1f)->mm(%.1f,%.1f) angW=%.1f", px, py, mm_x, mm_y, world_ang);
+        // T10 在此填抓取序列; 本步先打印定位并停。
+        s_run = false;
         vTaskDelay(pdMS_TO_TICKS(200));
     }
 }
