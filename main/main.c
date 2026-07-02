@@ -9,6 +9,7 @@
 #include "ai.h"
 #include "armlink.h"
 #include "kinematics.h"
+#include "armctrl.h"
 
 static const char *TAG = "main";
 
@@ -61,6 +62,7 @@ void app_main(void)
         ESP_LOGW(TAG, "ai init failed — 推理不可用，继续运行");
     } else {
         armlink_init();   // 机械臂目标产出器（UART 默认关，不驱动真臂）
+        armctrl_init();
         xTaskCreate(detect_task, "detect", 8192, NULL, 3, NULL);
     }
 
