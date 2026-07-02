@@ -53,13 +53,13 @@
 
 | 级 | 内容 | 通过条件（验收线） |
 |---|---|---|
-| **G0** | 不接舵机电，仅日志/逻辑分析仪核对捆绑帧字节序 | 帧字节与预期一致 |
-| **G1** | 接电、**无刀无电池**、慢速（`move_ms×1.5`）、单关节小幅 → IK 已知点，卷尺量末端 | 定位误差 ≤ 5mm；连杆常量 + 腕角 K 复核完成 |
+| **G0** | **不发 UART**：运动原语只编码 + 打印帧（`[G0-dry]` 标记，`armlink_uart_send` 不调用），纯日志核对捆绑帧字节序 | 日志帧字节与预期一致 |
+| **G1** | **UART 首次实发**（字节从 G1 起才出现在线上）：先**不接舵机电**、逻辑分析仪核对线上字节；再接电、**无刀无电池**、慢速（`move_ms×1.5`）、单关节小幅 → IK 已知点，卷尺量末端 | 线上字节正确；定位误差 ≤ 5mm；连杆常量 + 腕角 K 复核完成 |
 | **G2** | 标定后抓**替代物**（纸卷/泡沫圆柱），10 次 | ≥ 8/10 成功夹起 |
 | **G3** | 抓真 18650（**不切割**：抓起→放回原位），10 次 | ≥ 8/10 |
 | **G4** | 装刀，全流程含切割 | 完整循环 demo 可拍、无撞台面、无越界 PWM |
 
-代码里 `s_grade <= 1` 触发慢速；`s_grade < 4` 走 G3 抓放验证分支、`s_grade == 4` 才进 `cut_sequence()`。
+代码里 `s_grade == 0` 时运动原语只编码 + 打印（`[G0-dry]`）**不调 `armlink_uart_send`**（干跑，仅供日志核帧字节）；`s_grade <= 1` 触发慢速；`s_grade < 4` 走 G3 抓放验证分支、`s_grade == 4` 才进 `cut_sequence()`。
 
 ### 2.3 失败回退：绝不在刀口旁松爪
 
@@ -81,7 +81,7 @@
 3. 跑 `scripts/calibrate_homography.py`（`.venv-tools`：`pip install opencv-python numpy requests`）：
    - 交互式，按提示把电池摆到台面 8 个已知 mm 点（`KNOWN_MM`，按实际工作台改，≥6 点最小二乘更稳），逐点回车采集像素中心（取最高分框）。
    - `cv2.findHomography` 求 H → **残差自检**：逐点打印 `est(mm) err(mm)`，残差应 ≤ 几 mm，超了检查垫高/摆位/点数。
-   - 确认后 `POST /arm_calib`（body = `H0,H1,...,H8` 九个浮点）→ 板子 `armcal_save` 写 NVS，置 `valid=true`。
+   - 确认后 `POST /arm_calib`（body = `H0,H1,...,H8` 九个浮点）→ 板子 `armcal_save` 写 NVS，置 `valid=true`，并 `armctrl_reload_cal()` 让**运行中的控制器在空闲时自动重载新标定（无需重启）**——重载只在状态机空闲分支发生，绝不打断进行中的抓取序列。
 4. `GET /arm_calib` 可回查当前 H 与观察位、`valid` 状态。**未标定（valid=false）自动模式拒绝启动**。
 
 ## 4. 待实测参数表（物理量，D2+ 硬件 session 填）
@@ -123,7 +123,7 @@
 | `/detect` | GET | 读最近检测缓存（不触发推理，handler 轻） | `{w,h,infer_ms,n,boxes[...]}` |
 | `/arm_target` | GET | 读最近机械臂目标缓存（选中的最佳电池位姿） | 目标 JSON |
 | `/arm_calib` | GET | 查当前 H + 观察位 + valid | `{valid,H[9],observe[3]}` |
-| `/arm_calib` | POST | body=`H0,...,H8` 九浮点，写 NVS 置 valid | `{saved:bool}` |
+| `/arm_calib` | POST | body=`H0,...,H8` 九浮点，写 NVS 置 valid，并触发 armctrl 空闲重载（免重启） | `{saved:bool}` |
 | `/arm_grade` | GET | `?g=0..4` 设安全级；无参查询 | `{grade:N}` |
 | `/arm_run` | GET | `?on=1|0` 启停一轮抓取循环 | `{running:bool}` |
 | `/arm_test` | GET | 手动发裸腕舵机 #004 测试序列（中位→摆→回中，含 ~1.4s 阻塞） | `{sent:bool,err}` |

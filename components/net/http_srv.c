@@ -29,7 +29,7 @@ static esp_err_t root_get(httpd_req_t *req)
         "已存 <span id=c>0</span> 张</div>"
         "<div><button id=det onclick='dtog()'>识别开始</button> <span id=ds>-</span></div>"
         "<div style='margin:6px'><button onclick='atest()'>机械臂测试帧</button> "
-        "<button id=auto onclick='atog()'>自动跟踪:关</button> <span id=as>-</span></div>"
+        "<span id=as>-</span></div>"
         "<div style='margin:6px'>G级 <select id=gr onchange='gset()'>"
         "<option value=0>G0</option><option value=1>G1</option><option value=2>G2</option>"
         "<option value=3>G3</option><option value=4>G4</option></select> "
@@ -74,12 +74,6 @@ static esp_err_t root_get(httpd_req_t *req)
         "dt=setInterval(poll,180);b.textContent='识别停止';}"
         "function atest(){fetch('/arm_test').then(function(r){return r.json();}).then(function(d){"
         "document.getElementById('as').textContent=d.sent?'已发测试帧':('失败:'+d.err);});}"
-        "function atog(){fetch('/arm_auto').then(function(r){return r.json();}).then(function(d){"
-        "var want=d.auto_send?0:1;"
-        "fetch('/arm_auto?on='+want).then(function(r){return r.json();}).then(function(d2){"
-        "var b=document.getElementById('auto');"
-        "b.textContent='自动跟踪:'+(d2.auto_send?'开':'关');"
-        "document.getElementById('as').textContent=d2.auto_send?'自动驱动臂中':'已停自动';});});}"
         "function gset(){var g=document.getElementById('gr').value;"
         "fetch('/arm_grade?g='+g).then(function(r){return r.json();}).then(function(d){"
         "document.getElementById('gs').textContent='grade='+d.grade;});}"
@@ -200,6 +194,7 @@ static esp_err_t arm_calib_get(httpd_req_t *req)
         for (int i = 0; i < 9; i++) c.H[i] = h[i];
         c.valid = true;
         esp_err_t e = armcal_save(&c);
+        if (e == ESP_OK) armctrl_reload_cal();   // 免重启: 让运行中的 armctrl 空闲时重载新标定
         char ob[64];
         int n = snprintf(ob, sizeof(ob), "{\"saved\":%s}", e == ESP_OK ? "true" : "false");
         httpd_resp_set_type(req, "application/json");

@@ -16,6 +16,7 @@ static armcal_t s_cal;
 static volatile int  s_grade = 0;       // 0..4, 默认最保守
 static volatile bool s_run = false;     // 抓取循环开关, 默认关
 static bool s_ik_ok = false;
+static volatile bool s_cal_dirty = false;   // /arm_calib POST 后置位, armctrl 空闲时重载标定(免重启)
 
 #define SETTLE_MS 200   // 步间稳定余量(ms), >= 保证舵机到位
 
@@ -23,6 +24,7 @@ void armctrl_set_grade(int g) { if (g < 0) g = 0; if (g > 4) g = 4; s_grade = g;
 int  armctrl_get_grade(void) { return s_grade; }
 void armctrl_request_run(bool on) { s_run = on; ESP_LOGW(TAG, "run=%d", on); }
 bool armctrl_is_running(void) { return s_run; }
+void armctrl_reload_cal(void) { s_cal_dirty = true; }   // 请求空闲时重载 NVS 标定(见 armctrl_task 空闲分支)
 
 esp_err_t armctrl_move_arm(float x, float y, float z, int move_ms)
 {
@@ -37,8 +39,12 @@ esp_err_t armctrl_move_arm(float x, float y, float z, int move_ms)
     char frame[96];
     int len = armlink_encode_arm_frame(pwm, mt, frame, sizeof(frame));
     if (len <= 0) return ESP_FAIL;
-    armlink_uart_send(frame, len);
-    ESP_LOGI(TAG, "arm->(%.0f,%.0f,%.0f) %s", x, y, z, frame);
+    if (s_grade == 0) {
+        ESP_LOGW(TAG, "[G0-dry] 不发送(grade=0 干跑): %s", frame);
+    } else {
+        armlink_uart_send(frame, len);
+        ESP_LOGI(TAG, "arm->(%.0f,%.0f,%.0f) %s", x, y, z, frame);
+    }
     vTaskDelay(pdMS_TO_TICKS(mt + SETTLE_MS));
     return ESP_OK;
 #else
@@ -52,14 +58,21 @@ void armctrl_move_servo(int idx, int pwm, int move_ms)
 #if CONFIG_ARMLINK_UART_ENABLE
     char frame[32];
     int len = armlink_encode_servo_frame(idx, pwm, move_ms, frame, sizeof(frame));
-    if (len > 0) armlink_uart_send(frame, len);
-    ESP_LOGI(TAG, "servo #%03d -> %d", idx, pwm);
+    if (len > 0) {
+        if (s_grade == 0) {
+            ESP_LOGW(TAG, "[G0-dry] 不发送(grade=0 干跑): %s", frame);
+        } else {
+            armlink_uart_send(frame, len);
+            ESP_LOGI(TAG, "servo #%03d -> %d", idx, pwm);
+        }
+    }
     vTaskDelay(pdMS_TO_TICKS(move_ms + SETTLE_MS));
 #endif
 }
 
 #define POSE_FRAMES 5
 #define POSE_INTERVAL_MS 60
+#define POSE_FRESH_TIMEOUT_MS 1500
 #define POSE_CENTER_RANGE_PX 4.0f
 #define POSE_ANGLE_RANGE_DEG 12.0f
 
@@ -67,12 +80,23 @@ void armctrl_move_servo(int idx, int pwm, int move_ms)
 static bool acquire_pose(float *out_px, float *out_py, float *out_ang)
 {
     float cx[POSE_FRAMES], cy[POSE_FRAMES], ang[POSE_FRAMES];
+    uint32_t prev_fid = 0;
     for (int i = 0; i < POSE_FRAMES; i++) {
         arm_target_t t;
-        armlink_get_last_target(&t);
-        if (!t.valid) { ESP_LOGW(TAG, "pose: 第%d帧无目标", i); return false; }
+        int waited = 0;
+        // 第0帧只需有效; 后续帧必须是新检测(frame_id 变化)。每 POSE_INTERVAL_MS 轮询, 超 POSE_FRESH_TIMEOUT_MS 判失败。
+        while (1) {
+            armlink_get_last_target(&t);
+            if (t.valid && (i == 0 || t.frame_id != prev_fid)) break;
+            if (waited >= POSE_FRESH_TIMEOUT_MS) {
+                ESP_LOGW(TAG, "pose: 第%d帧等新检测超时", i);
+                return false;
+            }
+            vTaskDelay(pdMS_TO_TICKS(POSE_INTERVAL_MS));
+            waited += POSE_INTERVAL_MS;
+        }
+        prev_fid = t.frame_id;
         cx[i] = t.center_x_px; cy[i] = t.center_y_px; ang[i] = t.angle_deg;
-        vTaskDelay(pdMS_TO_TICKS(POSE_INTERVAL_MS));
     }
     float minx = cx[0], maxx = cx[0], miny = cy[0], maxy = cy[0];
     float mina = ang[0], maxa = ang[0], sx = 0, sy = 0, sa = 0;
@@ -188,6 +212,11 @@ static void armctrl_task(void *arg)
     (void)arg;
     while (1) {
         if (!s_run || !s_ik_ok || !s_cal.valid) {
+            if (s_cal_dirty) {
+                s_cal_dirty = false;
+                armcal_load(&s_cal);
+                ESP_LOGI(TAG, "标定已重载 valid=%d", s_cal.valid);
+            }
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
         }
