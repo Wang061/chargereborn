@@ -58,3 +58,18 @@ int kin_move_best(const float links[4], float x, float y, float z, int out_pwm[4
     if (!found) return -1;
     return kin_solve(links, x, y, z, (float)best_alpha, out_pwm);  // 0
 }
+
+int kin_selftest(void)
+{
+    const float tl[4] = {100.0f, 105.0f, 75.0f, 180.0f};
+    int pwm[4];
+    // Anchor A: x=0,y=200,z=50 -> [1500,1259,1776,861]
+    if (kin_move_best(tl, 0, 200, 50, pwm) != 0) return 1;
+    if (pwm[0] != 1500 || pwm[1] != 1259 || pwm[2] != 1776 || pwm[3] != 861) return 2;
+    // Anchor B: x=120,y=120,z=40 -> [1166,1300,1855,840]（pwm0=1000 即 theta6 bug）
+    if (kin_move_best(tl, 120, 120, 40, pwm) != 0) return 3;
+    if (pwm[0] != 1166 || pwm[1] != 1300 || pwm[2] != 1855 || pwm[3] != 840) return 4;
+    // Anchor C: 不可达
+    if (kin_move_best(tl, 0, 900, 50, pwm) != -1) return 5;
+    return 0;
+}

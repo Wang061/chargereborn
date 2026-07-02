@@ -17,6 +17,10 @@ int kin_solve(const float links[4], float x, float y, float z, float alpha_deg, 
 // 返回: 0=成功(out_pwm 有效); -1=y<0 或全程无解。
 int kin_move_best(const float links[4], float x, float y, float z, int out_pwm[4]);
 
+// 用固定测试连杆(100,105,75,180)对拍内嵌 golden PWM，验证 IK 数学未回归(尤其 theta6)。
+// 返回 0=通过; 非0=失败(数学损坏，调用方应拒绝进自动模式)。
+int kin_selftest(void);
+
 #ifdef __cplusplus
 }
 #endif
