@@ -9,6 +9,7 @@
 #include "camera.h"
 #include "ai.h"
 #include "armlink.h"
+#include "armcal.h"
 
 static const char *TAG = "http_srv";
 
@@ -165,6 +166,46 @@ static esp_err_t arm_auto_get(httpd_req_t *req)
     return httpd_resp_send(req, buf, n);
 }
 
+// 标定: GET 查询当前; POST body="H0,H1,...,H8" 写入并置 valid。
+static esp_err_t arm_calib_get(httpd_req_t *req)
+{
+    armcal_t c;
+    armcal_load(&c);
+
+    if (req->method == HTTP_POST) {
+        char body[256];
+        int total = req->content_len < (int)sizeof(body) - 1 ? req->content_len : (int)sizeof(body) - 1;
+        int got = 0;
+        while (got < total) {
+            int r = httpd_req_recv(req, body + got, total - got);
+            if (r <= 0) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv"); return ESP_FAIL; }
+            got += r;
+        }
+        body[got] = '\0';
+        float h[9];
+        int nparsed = sscanf(body, "%f,%f,%f,%f,%f,%f,%f,%f,%f",
+            &h[0],&h[1],&h[2],&h[3],&h[4],&h[5],&h[6],&h[7],&h[8]);
+        if (nparsed != 9) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "need 9 floats"); return ESP_FAIL; }
+        for (int i = 0; i < 9; i++) c.H[i] = h[i];
+        c.valid = true;
+        esp_err_t e = armcal_save(&c);
+        char ob[64];
+        int n = snprintf(ob, sizeof(ob), "{\"saved\":%s}", e == ESP_OK ? "true" : "false");
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_send(req, ob, n);
+    }
+
+    char buf[320];
+    int n = snprintf(buf, sizeof(buf),
+        "{\"valid\":%s,\"H\":[%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f],"
+        "\"observe\":[%.1f,%.1f,%.1f]}",
+        c.valid ? "true" : "false",
+        c.H[0],c.H[1],c.H[2],c.H[3],c.H[4],c.H[5],c.H[6],c.H[7],c.H[8],
+        c.observe_x, c.observe_y, c.observe_z);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, n);
+}
+
 static esp_err_t capture_get(httpd_req_t *req)
 {
     // 解析 ?name=<类名>，只保留 [0-9A-Za-z_-]，缺省 "cap"
@@ -230,5 +271,9 @@ void net_http_start(void)
     httpd_register_uri_handler(server, &arm_test);
     httpd_uri_t arm_auto = { .uri = "/arm_auto", .method = HTTP_GET, .handler = arm_auto_get };
     httpd_register_uri_handler(server, &arm_auto);
+    httpd_uri_t calib_g = { .uri = "/arm_calib", .method = HTTP_GET,  .handler = arm_calib_get };
+    httpd_register_uri_handler(server, &calib_g);
+    httpd_uri_t calib_p = { .uri = "/arm_calib", .method = HTTP_POST, .handler = arm_calib_get };
+    httpd_register_uri_handler(server, &calib_p);
     ESP_LOGI(TAG, "http server up -> http://192.168.4.1/");
 }
