@@ -135,6 +135,36 @@ static esp_err_t pick_sequence(float mm_x, float mm_y, float world_ang)
     return ESP_OK;
 }
 
+// 切割: 移到刀口安全位 -> 下探接触 -> 往复切 cut_times 次 -> 回安全位。
+static esp_err_t cut_sequence(void)
+{
+    float sx = s_cal.blade_x - s_cal.cut_offset_x;
+    float ex = s_cal.blade_x + s_cal.cut_offset_x;
+    float by = s_cal.blade_y;
+    if (armctrl_move_arm(s_cal.blade_x, by, s_cal.blade_safe_z, 1600) != ESP_OK) return ESP_FAIL;
+    if (armctrl_move_arm(sx, by, s_cal.blade_contact_z, 1400) != ESP_OK) return ESP_FAIL;
+    for (int i = 0; i < s_cal.cut_times; i++) {
+        if (armctrl_move_arm(ex, by, s_cal.blade_contact_z, 1000) != ESP_OK) return ESP_FAIL;
+        if (i != s_cal.cut_times - 1) {
+            if (armctrl_move_arm(sx, by, s_cal.blade_contact_z, 1000) != ESP_OK) return ESP_FAIL;
+        }
+    }
+    if (armctrl_move_arm(s_cal.blade_x, by, s_cal.blade_safe_z, 1600) != ESP_OK) return ESP_FAIL;
+    ESP_LOGI(TAG, "切割完成");
+    return ESP_OK;
+}
+
+// 放回: 移到放置点上方 -> 下降 -> 开爪 -> 抬起。
+static esp_err_t place_back(float mm_x, float mm_y)
+{
+    if (armctrl_move_arm(mm_x, mm_y, s_cal.carry_z, 1600) != ESP_OK) return ESP_FAIL;
+    if (armctrl_move_arm(mm_x, mm_y, s_cal.place_z, 1400) != ESP_OK) return ESP_FAIL;
+    armctrl_move_servo(5, s_cal.gripper_open_pwm, s_cal.gripper_time_ms);
+    if (armctrl_move_arm(mm_x, mm_y, s_cal.approach_z, 1400) != ESP_OK) return ESP_FAIL;
+    ESP_LOGI(TAG, "放回完成");
+    return ESP_OK;
+}
+
 // 回观察位(先中转点消回差, 再到观察位), 腕中位 + 开爪。
 static void go_observe(void)
 {
@@ -175,9 +205,17 @@ static void armctrl_task(void *arg)
             s_run = false;
             continue;
         }
-        // T11 在此填 G4 切割+放回; 本步 G4 暂同 G3。
+        // G4: 抓起 -> 移刀口切割 -> 放回 -> 回观察位
+        if (cut_sequence() != ESP_OK) {
+            ESP_LOGW(TAG, "切割失败, 保持夹持回观察位");
+            go_observe(); s_run = false; continue;
+        }
+        if (place_back(mm_x, mm_y) != ESP_OK) {
+            ESP_LOGW(TAG, "放回失败");
+        }
         go_observe();
-        s_run = false;
+        ESP_LOGI(TAG, "完整循环完成");
+        s_run = false;   // 单轮; 连续分拣是 bonus, 改为 continue 即连续
         vTaskDelay(pdMS_TO_TICKS(200));
     }
 }
