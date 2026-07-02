@@ -165,13 +165,21 @@ static esp_err_t place_back(float mm_x, float mm_y)
     return ESP_OK;
 }
 
-// 回观察位(先中转点消回差, 再到观察位), 腕中位 + 开爪。
-static void go_observe(void)
+// 回观察位(先中转点消回差, 再到观察位), 腕中位。
+// open_grip=false 供夹持着电池的错误回退(如切割失败): 不开爪, 保持夹持等人工取回。
+static void go_observe_ex(bool open_grip)
 {
-    armctrl_move_servo(5, s_cal.gripper_open_pwm, s_cal.gripper_time_ms);   // 开爪
+    if (open_grip) {
+        armctrl_move_servo(5, s_cal.gripper_open_pwm, s_cal.gripper_time_ms);   // 开爪
+    }
     armctrl_move_servo(4, s_cal.wrist_center_pwm, 600);                     // 腕中位
     armctrl_move_arm(0, s_cal.observe_y, s_cal.carry_z, 1200);             // 中转(正前高处)
     armctrl_move_arm(s_cal.observe_x, s_cal.observe_y, s_cal.observe_z, 1200);
+}
+
+static void go_observe(void)
+{
+    go_observe_ex(true);
 }
 
 // 状态机主体(T9-T11 逐步填); 本任务只做: 未就绪守卫 + 回观察位 + 占位。
@@ -207,8 +215,12 @@ static void armctrl_task(void *arg)
         }
         // G4: 抓起 -> 移刀口切割 -> 放回 -> 回观察位
         if (cut_sequence() != ESP_OK) {
-            ESP_LOGW(TAG, "切割失败, 保持夹持回观察位");
-            go_observe(); s_run = false; continue;
+            ESP_LOGW(TAG, "切割失败, 保持夹持撤离刀口回观察位(等人工取回)");
+            // 先尽力撤到刀口安全高度(失败也继续撤, 不能停在刀口): 返回值有意忽略
+            (void)armctrl_move_arm(s_cal.blade_x, s_cal.blade_y, s_cal.blade_safe_z, 1400);
+            go_observe_ex(false);   // 不开爪 —— 半切开的电池绝不在刀口旁松掉
+            s_run = false;
+            continue;
         }
         if (place_back(mm_x, mm_y) != ESP_OK) {
             ESP_LOGW(TAG, "放回失败");
