@@ -26,6 +26,8 @@ static esp_err_t root_get(httpd_req_t *req)
         "<button id=run onclick='toggle()'>连拍开始</button> "
         "已存 <span id=c>0</span> 张</div>"
         "<div><button id=det onclick='dtog()'>识别开始</button> <span id=ds>-</span></div>"
+        "<div style='margin:6px'><button onclick='atest()'>机械臂测试帧</button> "
+        "<button id=auto onclick='atog()'>自动跟踪:关</button> <span id=as>-</span></div>"
         "<p style='position:relative;display:inline-block;line-height:0'>"
         "<img id=v style='max-width:96vw;display:block'>"
         "<canvas id=ov style='position:absolute;left:0;top:0;pointer-events:none'></canvas>"
@@ -63,6 +65,14 @@ static esp_err_t root_get(httpd_req_t *req)
         "function dtog(){var b=document.getElementById('det');"
         "if(dt){clearInterval(dt);dt=null;b.textContent='识别开始';return;}"
         "dt=setInterval(poll,180);b.textContent='识别停止';}"
+        "function atest(){fetch('/arm_test').then(function(r){return r.json();}).then(function(d){"
+        "document.getElementById('as').textContent=d.sent?'已发测试帧':('失败:'+d.err);});}"
+        "function atog(){fetch('/arm_auto').then(function(r){return r.json();}).then(function(d){"
+        "var want=d.auto_send?0:1;"
+        "fetch('/arm_auto?on='+want).then(function(r){return r.json();}).then(function(d2){"
+        "var b=document.getElementById('auto');"
+        "b.textContent='自动跟踪:'+(d2.auto_send?'开':'关');"
+        "document.getElementById('as').textContent=d2.auto_send?'自动驱动臂中':'已停自动';});});}"
         "document.getElementById('v').src='http://'+location.hostname+':81/stream';"
         "</script></body></html>";
     httpd_resp_set_type(req, "text/html");
@@ -119,6 +129,38 @@ static esp_err_t arm_target_get(httpd_req_t *req)
     } else {
         n = snprintf(buf, sizeof(buf), "{\"valid\":false,\"frame_id\":%u}", (unsigned)t.frame_id);
     }
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, n);
+}
+
+// 机械臂手动测试帧：点一下发一条固定安全 $KMS: 帧，供首次 UART 联调（受控、点一次发一次）。
+static esp_err_t arm_test_get(httpd_req_t *req)
+{
+    esp_err_t e = armlink_send_test_frame();
+    char buf[96];
+    int n = snprintf(buf, sizeof(buf),
+        "{\"sent\":%s,\"err\":\"%s\"}",
+        (e == ESP_OK) ? "true" : "false", esp_err_to_name(e));
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, n);
+}
+
+// 自动发送开关：/arm_auto?on=1 开（检测到电池每帧自动发坐标驱动臂）；on=0 关。默认关。
+static esp_err_t arm_auto_get(httpd_req_t *req)
+{
+    int on = -1;   // -1=仅查询不改
+    size_t qlen = httpd_req_get_url_query_len(req) + 1;
+    if (qlen > 1 && qlen < 64) {
+        char q[64], val[8];
+        if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK &&
+            httpd_query_key_value(q, "on", val, sizeof(val)) == ESP_OK) {
+            on = (val[0] == '1') ? 1 : 0;
+        }
+    }
+    if (on >= 0) armlink_set_auto_send(on != 0);
+    char buf[64];
+    int n = snprintf(buf, sizeof(buf), "{\"auto_send\":%s}",
+                     armlink_get_auto_send() ? "true" : "false");
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, n);
 }
@@ -184,5 +226,9 @@ void net_http_start(void)
     httpd_register_uri_handler(server, &detect);
     httpd_uri_t arm = { .uri = "/arm_target", .method = HTTP_GET, .handler = arm_target_get };
     httpd_register_uri_handler(server, &arm);
+    httpd_uri_t arm_test = { .uri = "/arm_test", .method = HTTP_GET, .handler = arm_test_get };
+    httpd_register_uri_handler(server, &arm_test);
+    httpd_uri_t arm_auto = { .uri = "/arm_auto", .method = HTTP_GET, .handler = arm_auto_get };
+    httpd_register_uri_handler(server, &arm_auto);
     ESP_LOGI(TAG, "http server up -> http://192.168.4.1/");
 }
