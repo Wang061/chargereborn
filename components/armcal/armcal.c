@@ -13,9 +13,9 @@ void armcal_defaults(armcal_t *c)
     memset(c, 0, sizeof(*c));
     // 单位阵占位(未标定)
     c->H[0] = 1.0f; c->H[4] = 1.0f; c->H[8] = 1.0f;
-    // 连杆起点(真机 .ino 值; 卷尺实测后覆盖)
-    c->link_mm[0] = 100.0f; c->link_mm[1] = 105.0f;
-    c->link_mm[2] = 75.0f;  c->link_mm[3] = 180.0f;
+    // 连杆(卷尺实测 2026-07-02, 销心到销心; L3=腕#003轴心到18650中轴闭合位)
+    c->link_mm[0] = 107.0f; c->link_mm[1] = 107.0f;
+    c->link_mm[2] = 86.5f;  c->link_mm[3] = 165.0f;
     // 观察位(起点,须实测调; y 正前方, z 高处俯视)
     c->observe_x = 0.0f; c->observe_y = 130.0f; c->observe_z = 120.0f;
     // 腕#004(OpenMV 继承)
