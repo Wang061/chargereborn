@@ -39,8 +39,9 @@ esp_err_t armctrl_move_arm(float x, float y, float z, int move_ms)
     char frame[96];
     int len = armlink_encode_arm_frame(pwm, mt, frame, sizeof(frame));
     if (len <= 0) return ESP_FAIL;
-    if (s_grade == 0) {
-        ESP_LOGW(TAG, "[G0-dry] 不发送(grade=0 干跑): %s", frame);
+    // 干跑条件: G0 或 未标定 —— 未标定时即使 grade 被中途拉高也绝不发字节(联锁第4道)
+    if (s_grade == 0 || !s_cal.valid) {
+        ESP_LOGW(TAG, "[G0-dry] 不发送(%s): %s", s_grade == 0 ? "grade=0 干跑" : "未标定", frame);
     } else {
         armlink_uart_send(frame, len);
         ESP_LOGI(TAG, "arm->(%.0f,%.0f,%.0f) %s", x, y, z, frame);
@@ -59,8 +60,8 @@ void armctrl_move_servo(int idx, int pwm, int move_ms)
     char frame[32];
     int len = armlink_encode_servo_frame(idx, pwm, move_ms, frame, sizeof(frame));
     if (len > 0) {
-        if (s_grade == 0) {
-            ESP_LOGW(TAG, "[G0-dry] 不发送(grade=0 干跑): %s", frame);
+        if (s_grade == 0 || !s_cal.valid) {
+            ESP_LOGW(TAG, "[G0-dry] 不发送(%s): %s", s_grade == 0 ? "grade=0 干跑" : "未标定", frame);
         } else {
             armlink_uart_send(frame, len);
             ESP_LOGI(TAG, "servo #%03d -> %d", idx, pwm);
@@ -211,14 +212,22 @@ static void armctrl_task(void *arg)
 {
     (void)arg;
     while (1) {
-        if (!s_run || !s_ik_ok || !s_cal.valid) {
+        // G0 干跑不需要标定(只核帧字节, 原语层已保证未标定不发 UART);
+        // grade>=1 实发仍要求 s_cal.valid —— 未标定的"mm"是假坐标, 不许驱动真舵机。
+        bool dry_ok = (s_grade == 0);
+        if (!s_run || !s_ik_ok || (!s_cal.valid && !dry_ok)) {
             if (s_cal_dirty) {
                 s_cal_dirty = false;
                 armcal_load(&s_cal);
                 ESP_LOGI(TAG, "标定已重载 valid=%d", s_cal.valid);
             }
+            if (s_run && !s_ik_ok) { ESP_LOGW(TAG, "run 被拒: IK 自检未过"); s_run = false; }
+            else if (s_run && !s_cal.valid) { ESP_LOGW(TAG, "run 被拒: 未标定(G0 干跑不受此限)"); s_run = false; }
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
+        }
+        if (!s_cal.valid) {
+            ESP_LOGW(TAG, "[G0-dry] 未标定: H=单位阵, px 当 mm 用, 仅核帧字节");
         }
         // T9-T11 在此填: 观察→定位→抓→切→放→回观察; 本步先回观察位并停。
         go_observe();
