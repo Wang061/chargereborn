@@ -12,7 +12,13 @@
 static const char *TAG = "armlink";
 
 // —— 选框 / 编码 常量（命名，注单位）——
-#define ARMLINK_CLS_BATTERY       0       // 18650 类别 id（与 ai_class_name 一致）
+// 18650 类别 id：与 ai_class_name 一致。4 类模型(battery_yolo)顺序 0:21700 1:18650 2:9V 3:AA；
+// 单类模型(espdet)只有 cls=0=18650。两套配置下 id 不同，用 Kconfig 分支避免抓错电池种类。
+#if CONFIG_AI_DETECTOR_BATTERY_YOLO
+#define ARMLINK_CLS_BATTERY       1
+#else
+#define ARMLINK_CLS_BATTERY       0
+#endif
 #define ARMLINK_MIN_ANISOTROPY    0.10f   // 角度置信门限，低于此不取该框角度
 // 腕角 -> PWM 占位映射（参考旧 OpenMV pwm=1500+deg*K；K 与零位需实测标定）
 #define ARMLINK_WRIST_PWM_MID     1500
