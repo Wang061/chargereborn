@@ -1,0 +1,7 @@
+version: "0.1.0"
+license: "MIT"
+description: battery detect model, 4-class (21700/18650/9V/AA), ESPDet-Pico nc=4 retrain.
+url: https://github.com/espressif/esp-dl/tree/master/models/battery_detect
+dependencies:
+  espressif/esp-dl:
+    version: "==3.3.5"
