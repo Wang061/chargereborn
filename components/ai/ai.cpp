@@ -2,6 +2,8 @@
 #include "battery_angle.h"
 #if CONFIG_AI_DETECTOR_BATTERY_YOLO
 #include "battery_yolo_detect.hpp"
+#elif CONFIG_AI_DETECTOR_BATTERY_DETECT4
+#include "espdet4_detect.hpp"
 #else
 #include "espdet_detect.hpp"
 #endif
@@ -47,6 +49,9 @@ extern "C" esp_err_t ai_init(void) {
 #if CONFIG_AI_DETECTOR_BATTERY_YOLO
     if (!s_det)  s_det  = new BatteryYoloDetect();  // lazy_load=true：首次 run 才载模型
     ESP_LOGI(TAG, "ai_init ok (esp-dl YOLOv8n 4-class, lazy)");
+#elif CONFIG_AI_DETECTOR_BATTERY_DETECT4
+    if (!s_det)  s_det  = new ESPDet4Detect();  // lazy_load=true：首次 run 才载模型
+    ESP_LOGI(TAG, "ai_init ok (esp-dl ESPDet-Pico 4-class, lazy)");
 #else
     if (!s_det)  s_det  = new ESPDetDetect();   // lazy_load=true：首次 run 才载模型
     ESP_LOGI(TAG, "ai_init ok (esp-dl ESPDet, lazy)");
@@ -83,8 +88,9 @@ extern "C" void ai_get_last(ai_result_t *out) {
 }
 
 extern "C" const char *ai_class_name(int cls) {
-#if CONFIG_AI_DETECTOR_BATTERY_YOLO
+#if CONFIG_AI_DETECTOR_BATTERY_YOLO || CONFIG_AI_DETECTOR_BATTERY_DETECT4
     // 4 类电池模型, 类别 id 顺序 = 训练集 data.yaml (0:21700 1:18650 2:9V 3:AA)
+    // battery_detect4 的 battery4.yaml 沿用同一顺序(NAMES 建集时对齐)
     switch (cls) {
     case 0: return "21700";
     case 1: return "18650";
