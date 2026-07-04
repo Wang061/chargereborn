@@ -16,14 +16,18 @@ void armcal_defaults(armcal_t *c)
     // 连杆(卷尺实测 2026-07-02, 销心到销心; L3=腕#003轴心到18650中轴闭合位)
     c->link_mm[0] = 107.0f; c->link_mm[1] = 107.0f;
     c->link_mm[2] = 86.5f;  c->link_mm[3] = 165.0f;
-    // 观察位(起点,须实测调; y 正前方, z 高处俯视)
-    c->observe_x = 0.0f; c->observe_y = 130.0f; c->observe_z = 120.0f;
-    // 腕#004(OpenMV 继承)
-    c->wrist_center_pwm = 1500; c->wrist_k = 5.6f; c->wrist_zero_deg = 0;
-    // 夹爪#005(OpenMV 继承, G1 用户验证)
-    c->gripper_open_pwm = 800; c->gripper_close_pwm = 1700; c->gripper_time_ms = 800;
-    // 高度(OpenMV 继承起点)
-    c->pick_z = 0.0f; c->approach_z = 70.0f; c->carry_z = 120.0f; c->place_z = 3.0f;
+    // 观察位(G1 定稿 2026-07-04: 采用 OpenMV 原厂 Home 位 (0,100,70), alpha=-77 俯视,
+    // 用户实测画面覆盖优于更垂直的(0,100,50); 标定8点带 y=150..210 在视野内)
+    c->observe_x = 0.0f; c->observe_y = 100.0f; c->observe_z = 70.0f;
+    // 腕#004(G1 实测 2026-07-03: +504us 转 60° => k=504/60=8.4 pwm/deg, 约240°行程档;
+    // 旧 OpenMV 继承 5.6 会把腕角打 2/3 折扣)
+    c->wrist_center_pwm = 1500; c->wrist_k = 8.4f; c->wrist_zero_deg = 0;
+    // 夹爪#005(G1 实测 2026-07-03: 小PWM=开; 1400 夹住φ14, +80 余量=1480 牢固且舵机安静;
+    // 旧继承值 1700 会越过夹持点 ~300us 硬堵转, 禁用)
+    c->gripper_open_pwm = 800; c->gripper_close_pwm = 1480; c->gripper_time_ms = 800;
+    // 高度(G1 实测 2026-07-03: IK 绝对 z 系统偏高 ~20mm(低位), 下列为"命令值"经验定标:
+    // 命令 z=0 时爪心恰在平躺φ14电池轴心(~7mm), 完整抓取-抬起验证通过; place=pick 同高释放)
+    c->pick_z = 0.0f; c->approach_z = 70.0f; c->carry_z = 120.0f; c->place_z = 0.0f;
     // 刀口(OpenMV 继承起点)
     c->blade_x = 145.0f; c->blade_y = 75.0f; c->blade_safe_z = 100.0f;
     c->blade_contact_z = 40.0f; c->cut_offset_x = 12.0f; c->cut_times = 2;
