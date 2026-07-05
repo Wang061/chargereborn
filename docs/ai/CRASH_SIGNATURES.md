@@ -25,6 +25,15 @@
 - 标签: #wdt #freertos
 -->
 
+### S3 flash 后卡 DOWNLOAD 模式不进 app —— USB-Serial-JTAG 复位不重采样 strapping  (2026-07-05)
+- 症状: esptool 烧录成功（hash 校验过 + "Hard resetting via RTS pin... Done"），但之后 monitor 只反复打印 `rst:0x15 (USB_UART_CHIP_RESET),boot:0x23 (DOWNLOAD(USB/UART0))` + `waiting for download`，app 永远不启动。看起来像"烧成砖了"，实际固件完好。日志 `logs/monitor/20260705_reset_test.log`。
+- 根因: ESP32-S3 **原生 USB-Serial-JTAG 只能触发 core reset，不会重新采样 GPIO0 boot-strapping 脚**（乐鑫官方文档确认）。烧录序列把芯片带进 download 模式后，RTS hard_reset 走的是 core reset 路径，download 状态被锁存，无论复位多少次都回到 ROM bootloader。与固件内容无关——不要去改代码/重烧。
+- 修法: 跑任意一条带 `--after watchdog_reset` 的 esptool 只读命令触发**真·全芯片 watchdog 复位**（会重采样 strapping）：`python -m esptool --chip esp32s3 --port COM7 --after watchdog_reset read_mac`。注意本机 esptool v4.12.dev1 参数是**下划线** `watchdog_reset`，连字符写法会被 argparse 拒。执行后板子立即正常进 app。
+- 预防: 经原生 USB 口（COM7）烧录后若 monitor 出现 `boot:0x23 DOWNLOAD ... waiting for download` 循环，第一反应就是 watchdog_reset，别怀疑固件；可考虑把 `--after watchdog_reset` 直接加进 flash 命令/idf-bridge 封装。抓 boot 日志时**先启动 capture 再触发复位**（复位极快，后启动 capture 必漏开头）。
+- 标签: #flash #usb-serial-jtag #strapping #bootmode #esptool
+
+---
+
 ### YOLOv8n 4类模型上板 5.8s/帧 → task_wdt 每周期触发  (2026-07-04)
 - 症状: flash 后 monitor 每周期 `task_wdt: ... IDLE0 (CPU 0)` + `Tasks currently running: CPU 0: detect`，`detect: n=0 infer=5825ms`（重复回溯、CPU0 饥饿）；WiFi AP station drop（reason=8）；板子进降级循环但不复位。日志 `logs/monitor/20260704_155154.log`。
 - 根因: 队友模型是**全尺寸 YOLOv8n backbone**（3.0M 参数 / 8.1 GFLOPs），非 MCU 特化架构。ESP32-S3@160MHz int8 实测 5.8s/帧，vs ESPDet-Pico（354K 参数，为该 MCU 设计）219ms —— 26x。1→4 类不需要 8.5x 参数量，是 backbone 选型错误；量化调参/包装代码**无法修复架构级超载**（导出侧 6 分离输出、letterbox 校准这次都做对了，照样 5.8s）。
