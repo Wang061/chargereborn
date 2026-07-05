@@ -2,14 +2,7 @@ menu "models: battery_detect4"
     config FLASH_ESPDET_PICO_224_224_BATTERY4
         bool "flash espdet_pico_224_224_battery4"
         depends on !ESPDET4_DETECT_MODEL_IN_SDCARD
-        # default n until the trained+quantized .espdl actually lands in models/s3/ -
-        # ESP-IDF auto-discovers this component and this flag isn't gated by
-        # components/ai's AI_DETECTOR choice (see battery_detect/battery_yolo: both
-        # always embed regardless of which one is "selected", hence the 8MB
-        # partition). Defaulting y here before the model file exists would break
-        # the very next build (pack_espdl_models.py DEPENDS on a missing file).
-        # Flip to y once models/s3/espdet_pico_224_224_battery4.espdl is in place.
-        default n
+        default y
 
     choice
         prompt "default"
@@ -23,10 +16,10 @@ menu "models: battery_detect4"
 
     config DEFAULT_ESPDET4_DETECT_MODEL
         int
-        # unconditional 0 (sole enum member): with the scaffold-state FLASH flag
-        # off, ESPDET_PICO_224_224_BATTERY4 is unselectable and a "default 0 if"
-        # would leave this int valueless -> CONFIG_ macro not emitted -> .hpp
-        # default-arg compile error.
+        # unconditional (sole enum member = 0): espdet4_detect.cpp always compiles
+        # with the component, and .hpp uses this macro as a default arg - a
+        # "default 0 if <model>" would drop the macro (and break the build)
+        # whenever the FLASH flag is toggled off in an existing sdkconfig.
         default 0
 
     choice
