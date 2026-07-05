@@ -5,7 +5,7 @@
 namespace espdet4_detect {
 class ESPDet4 : public dl::detect::DetectImpl {
 public:
-    static inline constexpr float default_score_thr = 0.20;  // 与单类模型一致的起点阈值,上板后按实测再调
+    static inline constexpr float default_score_thr = 0.08;  // int8 量化置信度低(~0.05-0.18); 0.08 平衡检出/误报; 同时 run_img 有边缘框过滤
     static inline constexpr float default_nms_thr = 0.7;
     ESPDet4(const char *model_name, float score_thr, float nms_thr);
 };

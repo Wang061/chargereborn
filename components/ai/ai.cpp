@@ -32,6 +32,12 @@ static void run_img(dl::image::img_t &img, ai_result_t *out) {
     out->infer_ms = (uint32_t)((t1 - t0) / 1000);
     for (auto &r : results) {
         if (out->count >= AI_MAX_BOXES) break;
+        // int8 量化致置信度偏低(~0.05-0.18), 降阈值后须过滤边缘假框
+        // 拒掉碰画面边框的框(典型: 右上角 9V 假框 [621,0,639,58]):
+        int margin = 5;
+        if (r.box[0] <= margin || r.box[1] <= margin ||
+            r.box[2] >= (int)img.width - margin || r.box[3] >= (int)img.height - margin)
+            continue;
         ai_box_t *b = &out->boxes[out->count++];
         b->cls = r.category; b->score = r.score;
         b->x1 = r.box[0]; b->y1 = r.box[1]; b->x2 = r.box[2]; b->y2 = r.box[3];
