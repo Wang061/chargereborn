@@ -74,7 +74,7 @@ void armctrl_move_servo(int idx, int pwm, int move_ms)
 #define POSE_FRAMES 5
 #define POSE_INTERVAL_MS 60
 #define POSE_FRESH_TIMEOUT_MS 1500
-#define POSE_CENTER_RANGE_PX 4.0f
+#define POSE_CENTER_RANGE_PX 12.0f  // 2026-07-06 由4px放宽: 4px在640x480实拍下过严,量化噪声+像素抖动易频繁触发"位姿不稳"重试
 #define POSE_ANGLE_RANGE_DEG 12.0f
 
 // 连续读 N 帧目标缓存, 抖动超门限判失败, 否则输出中心/角度均值。
