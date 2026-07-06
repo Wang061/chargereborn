@@ -12,15 +12,19 @@
 static const char *TAG = "armlink";
 
 // —— 选框 / 编码 常量（命名，注单位）——
-// 18650 类别 id：与 ai_class_name 一致。4 类模型(battery_yolo/battery_detect4)顺序
-// 0:21700 1:18650 2:9V 3:AA；单类模型(espdet)只有 cls=0=18650。
-// 两套配置下 id 不同，用 Kconfig 分支避免抓错电池种类。
-#if CONFIG_AI_DETECTOR_BATTERY_YOLO || CONFIG_AI_DETECTOR_BATTERY_DETECT4
-#define ARMLINK_CLS_BATTERY       1
-#else
-#define ARMLINK_CLS_BATTERY       0
-#endif
+// 检测器只输出电池类别(4类模型:21700/18650/9V/AA；单类espdet只有18650)，没有"非电池"类，
+// 故选框不按具体类别过滤——任一电池类别都可作为抓取目标。
+// (2026-07-06 G1 实测踩坑：曾硬过滤只认 cls==18650，但同一颗测试电池在4类int8模型下经常
+//  被判成 AA 而非 18650，导致 armlink_update_from_ai 长期选不出目标、armctrl.acquire_pose
+//  反复等新检测超时("反复抬起来又降下去"却抓不到)。用户确认4类本就都要能抓，遂放开；
+//  若后续需要按类别区别处理(如只切锂电池类)，需先把 cls 带进 arm_target_t 再加判断，
+//  而不是走这个硬过滤。)
 #define ARMLINK_MIN_ANISOTROPY    0.10f   // 角度置信门限，低于此不取该框角度
+// 目标选框分数下限(区别于 ai/Kconfig 的 score_thr=0.08——那个是"要不要显示这个框"，
+// 这个是"够不够格当抓取目标")。2026-07-06 放开类别过滤后实测：真实电池稳定检出 0.50~0.88，
+// 量化噪声产生的幻视框集中在 0.12~0.27 且位置与真实框相距甚远(可达上百像素)；两簇之间有
+// 明显空档，取 0.40 卡在空档中间滤掉噪声，不影响真实检出。
+#define ARMLINK_MIN_SCORE         0.40f
 // 腕角 -> PWM 占位映射（参考旧 OpenMV pwm=1500+deg*K；K 与零位需实测标定）
 #define ARMLINK_WRIST_PWM_MID     1500
 #define ARMLINK_WRIST_PWM_PER_DEG 5.6f
@@ -66,12 +70,12 @@ void armlink_update_from_ai(const ai_result_t *r)
     t.src_w = (uint32_t)r->src_w;
     t.src_h = (uint32_t)r->src_h;
 
-    // 选最佳电池框：cls==battery 且角度可靠，取 score 最高者
+    // 选最佳电池框：不限具体电池类别，分数够格、角度可靠，取 score 最高者
     int best = -1;
     float best_score = -1.0f;
     for (int i = 0; i < r->count; i++) {
         const ai_box_t *b = &r->boxes[i];
-        if (b->cls != ARMLINK_CLS_BATTERY) continue;
+        if (b->score < ARMLINK_MIN_SCORE) continue;
         if (b->angle_deg < 0.0f || b->anisotropy < ARMLINK_MIN_ANISOTROPY) continue;
         if (b->score > best_score) { best_score = b->score; best = i; }
     }
