@@ -23,6 +23,9 @@ static volatile bool s_estop = false;   // 急停锁存; 置位后拒绝任何�
 
 #define SETTLE_MS 200   // 步间稳定余量(ms), >= 保证舵机到位
 
+#define WRIST_CCW_COMP_DEG 7.0f
+#define PICK_BACK_COMP_MM 5.0f
+
 static volatile bool s_continuous = false;
 static float s_processed_px[8][2];   // 连续模式防重抓: 本次运行会话已处理目标的px中心
 static int   s_processed_count = 0;
@@ -198,7 +201,7 @@ static bool acquire_pose(float *out_px, float *out_py, float *out_ang)
 // 与 OpenMV 参考(get_grip_angle_deg 用经验偏移,不显式减方位角)一致,G1 标定 wrist_zero_deg 时一并吸收。
 static int wrist_pwm_for_angle(float world_ang_deg)
 {
-    float a = world_ang_deg + s_cal.wrist_zero_deg;
+    float a = world_ang_deg + WRIST_CCW_COMP_DEG + s_cal.wrist_zero_deg;
     while (a >= 90.0f) a -= 180.0f;
     while (a < -90.0f) a += 180.0f;
     int pwm = s_cal.wrist_center_pwm - (int)(a * s_cal.wrist_k);
@@ -210,6 +213,8 @@ static esp_err_t pick_sequence(float mm_x, float mm_y, float world_ang)
 {
     float pre_z = s_cal.pick_z + 20.0f;   // 预抓高度(pick 上方 20mm)
     if (pre_z > s_cal.approach_z) pre_z = s_cal.approach_z;
+    float pick_x = mm_x;
+    float pick_y = mm_y - PICK_BACK_COMP_MM;   // +Y is arm-forward; back compensation is -Y.
 
     armctrl_move_servo(5, s_cal.gripper_open_pwm, s_cal.gripper_time_ms);   // 确保开爪
 
@@ -217,14 +222,17 @@ static esp_err_t pick_sequence(float mm_x, float mm_y, float world_ang)
     if (armctrl_move_arm(mm_x, mm_y, s_cal.approach_z, 1500) != ESP_OK) return ESP_FAIL;
     // 2. 腕对齐电池长轴
     armctrl_move_servo(4, wrist_pwm_for_angle(world_ang), 800);
+    ESP_LOGI(TAG, "pick comp: xy(%.1f,%.1f)->(%.1f,%.1f) back=%.1fmm wrist=%.1f->%.1f",
+             mm_x, mm_y, pick_x, pick_y, PICK_BACK_COMP_MM,
+             world_ang, world_ang + WRIST_CCW_COMP_DEG);
     // 3. 预降
-    if (armctrl_move_arm(mm_x, mm_y, pre_z, 1200) != ESP_OK) return ESP_FAIL;
+    if (armctrl_move_arm(pick_x, pick_y, pre_z, 1200) != ESP_OK) return ESP_FAIL;
     // 4. 最终下降到抓取高度
-    if (armctrl_move_arm(mm_x, mm_y, s_cal.pick_z, 1400) != ESP_OK) return ESP_FAIL;
+    if (armctrl_move_arm(pick_x, pick_y, s_cal.pick_z, 1400) != ESP_OK) return ESP_FAIL;
     // 5. 夹爪闭合
     armctrl_move_servo(5, s_cal.gripper_close_pwm, s_cal.gripper_time_ms);
     // 6. 抬起到搬运高度
-    if (armctrl_move_arm(mm_x, mm_y, s_cal.carry_z, 1400) != ESP_OK) return ESP_FAIL;
+    if (armctrl_move_arm(pick_x, pick_y, s_cal.carry_z, 1400) != ESP_OK) return ESP_FAIL;
     // 7. 腕回中位(搬运姿态)
     armctrl_move_servo(4, s_cal.wrist_center_pwm, 800);
     ESP_LOGI(TAG, "抓取序列完成");
