@@ -58,3 +58,12 @@
 - 修法: `net_http_start()` 加 `config.stack_size = 8192;`(components/net/http_srv.c)。与 81 口 stream server 一致。
 - 预防: 在 httpd handler 放大局部缓冲/结构体前核对 `HTTPD_DEFAULT_CONFIG().stack_size`(=4096);大缓冲用 static/堆;改 `ai_result_t`/`ai_box_t` 体积时注意所有栈上拷贝点。
 - 标签: #stack #httpd #freertos
+
+---
+
+### OV2640 花屏(画面撕裂成两半+偏色)/取帧超时 —— 2026-07-07 突发，跨复位间歇复现  (2026-07-07，**未根治**)
+- 症状: 视频流画面水平撕裂成上下/左右两截、色彩整体错乱(色度错位)；串口伴随成串 `cam_hal: Failed to get frame: timeout` + `esp_camera_fb_get returned NULL`(单场 85~163 条)，检测断流最长 86s；病发时模型在花屏帧上产出乱类别幽灵框(AA/9V/21700 翻转、score 0.27~0.73、σ_cy≈29px)或直接 n=0。**同一天内有的 boot 干净(0 失败)、有的 boot 带病**——boot 级随机。
+- 根因: **未定位**。已排除代码回归(07-06 两场烧录后检查日志 0 次取帧失败，其间相机代码零改动)。症状=DVP 帧同步错位(丢 VSYNC 后字节错排)，头号嫌疑是当天动过机架/排线导致的**物理接触不良或供电边际**(当天还出现过一次非人为 POWERON 复位，供电嫌疑加重)。
+- 修法(临时): 按 RST 复位重启碰运气，直到抽到干净 boot(实测干净 boot 全程稳定)。
+- 预防/待办: ①演示前断电重插相机排线/接头并检查供电(换独立供电或好线)；②候选软件自愈=连续 N 次 fb_get NULL 时 esp_camera deinit+reinit 重同步(**未实现**，注意 stream/capture/detect 三处并发持 fb 的释放时序)；③判断 boot 好坏的快速方法=看串口头 60s 有无 `cam_hal: Failed` 串。
+- 标签: #camera #ov2640 #dvp #hardware #open
