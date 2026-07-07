@@ -167,7 +167,7 @@
 | `/arm_target` | GET | 读跟踪器滤波后的机械臂目标缓存 | `{valid,stable,coasting,cx,cy,angle_deg,score,w,h,frame_id}` |
 | `/arm_calib` | GET | 查当前 H + 观察位 + valid | `{valid,H[9],observe[3]}` |
 | `/arm_calib` | POST | body=`H0,...,H8` 九浮点，写 NVS 置 valid，并触发 armctrl 空闲重载（免重启） | `{saved:bool}` |
-| `/arm_run` | GET | `?on=1|0&cont=1|0` 启停抓取循环；`cont=1` 完整循环后不停,继续下一轮 | `{running:bool,cont:bool}` |
+| `/arm_run` | GET | `?on=1|0&cont=1|0` 启停抓取循环；`cont=1` 完整循环后不停,继续下一轮 | `{running:bool,cont:bool,estopped:bool}` |
 | `/arm_estop` | GET | `?on=1` 立即急停并锁存(发 `$DST:0!`)；`?on=0` 清除锁存 | `{estopped:bool}` |
 
 操作页（`/` root）有**连续模式勾选 + 抓取启动/停止 + 急停**按钮，直连 `/arm_run`、`/arm_estop`。

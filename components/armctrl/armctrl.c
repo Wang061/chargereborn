@@ -333,7 +333,7 @@ static void armctrl_task(void *arg)
         if (place_back(mm_x, mm_y) != ESP_OK) {
             ESP_LOGW(TAG, "放回失败");
         }
-        s_holding = false;   // place尝试已完成(正常流已过开爪点);若place期间被急停中断,以SAFETY.md急停恢复流程为准(先断电人工取出)
+        s_holding = s_estop;   // 正常流已过开爪点→false;若place期间被急停中断(开爪可能没执行)→保持true错到安全侧,恢复时不开爪(SAFETY.md流程:先断电人工取出)
         int64_t t_placed = esp_timer_get_time();
         emit_cycle_log(t_identified, t_picked, t_cut, t_placed, true);
         // 记录本次目标 px 中心到防重抓排除表(px域: 放回原位后,同一观察位下一轮会在同一像素
