@@ -19,8 +19,8 @@ CONFIG_ESPDET4_DETECT_MODEL_IN_FLASH_RODATA=y
 CONFIG_FLASH_ESPDET_PICO_224_224_BATTERY4=y
 CONFIG_ESPDET_PICO_224_224_BATTERY4=y
 
-# ---- armlink: Brain→Steward(KM1) UART 命令链路（Phase1 联调）----
-# UART 硬件启用，但"每帧自动发坐标驱动臂"由运行时开关 s_auto_send 控制（默认关，见 armlink.c）。
+# ---- armlink: Brain→Steward(KM1) UART 命令链路 ----
+# UART 硬件启用，但唯一驱动者是 armctrl 状态机（run 默认 off + 未标定绝不发字节 + 急停锁存，见 armctrl.c）。
 # TX=GPIO1（Brain 空闲脚，避开相机 4-18/21、USB-JTAG 19/20、PSRAM 26-37、strapping 0/3/45/46）。
 # 接线: Brain GPIO1(TX) → KM1 OpenMV 口 RX2(GPIO41) + GND 共地。RX 不接(-1)，KM1 单向收。
 CONFIG_ARMLINK_UART_ENABLE=y

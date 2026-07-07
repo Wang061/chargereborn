@@ -278,7 +278,7 @@ void net_http_start(void)
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.stack_size = 8192;   // 默认 4096 不够: detect_get 的 buf[1536]+ai_result_t 会撑爆 httpd 任务栈 → 卡死/崩溃
-    config.max_uri_handlers = 16;   // 默认 8 不够: 已注册 11 个 URI(root/status/capture/detect/arm_*), 超出的会静默注册失败
+    config.max_uri_handlers = 16;   // 默认 8 不够: 已注册 9 个 URI(root/status/capture/detect/arm_*), 超出的会静默注册失败
     if (httpd_start(&server, &config) != ESP_OK) {
         ESP_LOGE(TAG, "httpd_start failed");
         return;

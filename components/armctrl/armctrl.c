@@ -211,7 +211,7 @@ static esp_err_t pick_sequence(float mm_x, float mm_y, float world_ang)
 
     armctrl_move_servo(5, s_cal.gripper_open_pwm, s_cal.gripper_time_ms);   // 确保开爪
 
-    // 1. 目标正上方安全高度悬停(G<=2 时此处人可急停确认)
+    // 1. 目标正上方安全高度悬停(此处人可经 /arm_estop 或断电随时急停)
     if (armctrl_move_arm(mm_x, mm_y, s_cal.approach_z, 1500) != ESP_OK) return ESP_FAIL;
     // 2. 腕对齐长轴
     armctrl_move_servo(4, wrist_pwm_for_angle(world_ang), 800);
