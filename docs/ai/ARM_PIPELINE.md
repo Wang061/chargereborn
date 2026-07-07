@@ -32,41 +32,32 @@
 - **捆绑帧格式**（4 主关节一帧）：`{#000PxxxxTxxxx!#001...!#002...!#003...!}`
   = #000 底座旋转 / #001 大臂 / #002 小臂 / #003 腕俯仰；腕旋转 #004、夹爪 #005 走单舵机帧 `{#0xxPxxxxTxxxx!}`。
   **✅ 捆绑帧真机验收通过（2026-07-03 G1 步 2）**：COM6 直发 62B 捆绑帧，KM1 逐字节回显、**四关节同动**——多段一帧解析在真机固件上成立，无需拆单帧回退。（此前 Phase 1 只验过单舵机帧。）
-- **唯一驱动者 = armctrl 状态机**。Phase 2 起 `armlink_update_from_ai` 只更新目标缓存，**不再直接发帧**（旧的"每帧自动发坐标"路径已中和）。`armlink_send_test_frame`（`/arm_test`）仍保留作单舵机手动联调。
+- **唯一驱动者 = armctrl 状态机**。Phase 2 起 `armlink_update_from_ai` 只更新目标缓存，**不再直接发帧**（旧的"每帧自动发坐标"路径已中和）。单舵机/单臂手动联调走 `armctrl_move_servo`/`armctrl_move_arm`（供状态机与联调的低层原语，见 `armctrl.h`）；原独立的 `/arm_test` 手动测试端点已随 G 级分级一并退役。
 - **⚠ `$KMS:x,y,z,t!` 自解算在真机 KM1 固件上未实现**（COM4 直连实测 sscanf 不匹配、两端无回应，见 `CRASH_SIGNATURES.md`）。**唯一可动的驱动 = 裸协议 `{#idxPpwmTms!}`**；IK 在 Brain 侧算完直接下发各舵机 PWM，不依赖 KM1 自解算。
 
 ## 2. 安全模型
 
-### 2.1 四重联锁（全绿才动手）
+### 2.1 三重联锁（全绿才动手）
 
-自动模式（`armctrl_task` 主循环）执行任何运动前，四个条件缺一不可：
+`armctrl_task` 主循环执行任何运动前，三个条件缺一不可：
 
 1. **编译期** `CONFIG_ARMLINK_UART_ENABLE` —— 未开则所有 `armctrl_move_*` 是空操作（`ESP_ERR_INVALID_STATE`），固件不驱动任何舵机。
-2. **运行时 grade**（`/arm_grade?g=`，`s_grade` 0–4，默认 **0**）—— 分级放行动作范围，未达对应级不放行下一级。
-3. **运行时 run**（`/arm_run?on=`，`s_run`，默认 **off**）—— 抓取循环总开关；每轮结束自动 `s_run=false`（单轮，防连续乱跑）。
-4. **IK 自检 + 标定 valid** —— 启动时 `kin_selftest()` 对拍内嵌 golden PWM，失败 `s_ik_ok=false` 禁用自动模式；`armcal_load` 无有效标定则 `s_cal.valid=false`，**未标定时 grade≥1 的实发模式直接被拒**（run 被拒会打日志并复位 s_run）。**例外：G0 干跑不要求标定**——G0 只核帧字节不碰真坐标（H=单位阵、px 当 mm 用）；且运动原语层有兜底：只要未标定，无论 grade 多少一律强制干跑不发 UART。
+2. **运行时 run**（`/arm_run?on=&cont=`，`s_run`，默认 **off**）—— 抓取循环总开关；单轮模式每轮结束自动 `s_run=false`，连续模式（`cont=1`）持续循环直到手动停止/急停/连续 3 次未获取到稳定目标。
+3. **IK 自检 + 标定 valid** —— 启动时 `kin_selftest()` 对拍内嵌 golden PWM，失败 `s_ik_ok=false` 禁用自动模式；`armcal_load` 无有效标定则 `s_cal.valid=false`，未标定时任何 `run` 请求直接被拒。运动原语层（`armctrl_move_arm`/`armctrl_move_servo`）额外做"未标定绝不发字节"的最后一道兜底，即使联锁被绕过也不会发出真实坐标。
 
-`s_auto_send`（`/arm_auto`）默认关，Phase 2 语义降级为"是否允许 armctrl 自动跑"的意向位（实际驱动权已在状态机）。
+连续模式的防重抓排除表在并发 `/arm_run` 请求下是尽力而为的(表本身只由 armctrl 任务读写、跨任务只传指针拷贝,无内存安全问题;但运行中重复发 `on=1` 可能清掉/漏记个别排除点,最坏一次重抓,下轮自纠)。
 
-### 2.2 安全分级 G0–G4（逐级通过条件）
+### 2.2 急停
 
-来源：`SAFETY.md` + 设计 spec §8。**未达对应级不放行下一级动作**；G1 干跑必须**用户在场**（可随时断电）。
-
-| 级 | 内容 | 通过条件（验收线） |
-|---|---|---|
-| **G0** | **不发 UART**：运动原语只编码 + 打印帧（`[G0-dry]` 标记，`armlink_uart_send` 不调用），纯日志核对捆绑帧字节序。**不要求标定**（未标定时 H=单位阵、px 当 mm 用，仅核帧） | 日志帧字节与预期一致 **✅ 2026-07-03 通过**（附带坐实：真板 boot 正常、`kin_selftest` 板上过） |
-| **G1** | **UART 首次实发**（字节从 G1 起才出现在线上）：先**不接舵机电**、逻辑分析仪核对线上字节；再接电、**无刀无电池**、慢速（`move_ms×1.5`）、单关节小幅 → IK 已知点，卷尺量末端 | 线上字节正确；**舵机行程仲裁完成**（§4 表首行）；**y 轴/x 正方向已用臂标定**（§3.2 第二段）；定位误差 ≤ 5mm；腕角 K + 夹爪 PWM 复核完成 |
-| **G2** | 标定后抓**替代物**（纸卷/泡沫圆柱），10 次 | ≥ 8/10 成功夹起 |
-| **G3** | 抓真实目标电池（φ14×51，**不切割**：抓起→放回原位），10 次 | ≥ 8/10 |
-| **G4** | 装刀，全流程含切割 | 完整循环 demo 可拍、无撞台面、无越界 PWM |
-
-代码里 `s_grade == 0` 时运动原语只编码 + 打印（`[G0-dry]`）**不调 `armlink_uart_send`**（干跑，仅供日志核帧字节）；`s_grade <= 1` 触发慢速；`s_grade < 4` 走 G3 抓放验证分支、`s_grade == 4` 才进 `cut_sequence()`。
+- **软件急停**：`/arm_estop?on=1` → `armctrl_estop()` 立即发送 `$DST:0!`（唯一真机验证过的急停串，见 `docs/ai/CRASH_SIGNATURES.md` 2026-07-02）→ 停止循环 → 锁存 `s_estop`；锁存期间任何 `run` 请求都被拒绝，需 `/arm_estop?on=0` 显式清除才能恢复。
+- **物理急停**：断动力电（首选，任何时候都可用，不依赖固件状态）。
+- 每个运动原语（`armctrl_move_arm`/`armctrl_move_servo`）内部都检查 `s_estop`，急停触发后即使当前序列还在执行中，下一个原语调用也会立即短路不发送。
 
 ### 2.3 失败回退：绝不在刀口旁松爪
 
 - **切割失败** → **保持夹持撤离**：先尽力撤到 `blade_safe_z`（返回值有意忽略，撤离优先），再 `go_observe_ex(false)` **不开爪** 回观察位，半切开的电池夹着等人工取回。
-- **抓取/放回失败** → `go_observe()` 正常开爪回观察位、`s_run=false`。
-- 复位默认安全位：腕中位 #004=1500、开爪 #005=开、抬到 `carry_z`。急停 = 物理断动力电（首选）/ 软件停循环。
+- **抓取失败** → `go_observe()` 正常开爪回观察位、`s_run=false`。
+- 复位默认安全位：腕中位 #004=1500、开爪 #005=开、抬到 `carry_z`。
 
 ## 3. 标定流程（操作手册级）
 
@@ -169,13 +160,11 @@
 
 | 端点 | 方法 | 作用 | 返回 |
 |---|---|---|---|
-| `/detect` | GET | 读最近检测缓存（不触发推理，handler 轻） | `{w,h,infer_ms,n,boxes[...]}` |
-| `/arm_target` | GET | 读最近机械臂目标缓存（选中的最佳电池位姿） | 目标 JSON |
+| `/detect` | GET | 读最近检测缓存（不触发推理，handler 轻）；`boxes[]` 只含 ≥0.40 高分框（弱框只喂跟踪器不上叠加） | `{w,h,infer_ms,n,boxes[...]}` |
+| `/arm_target` | GET | 读跟踪器滤波后的机械臂目标缓存 | `{valid,stable,coasting,cx,cy,angle_deg,score,w,h,frame_id}` |
 | `/arm_calib` | GET | 查当前 H + 观察位 + valid | `{valid,H[9],observe[3]}` |
 | `/arm_calib` | POST | body=`H0,...,H8` 九浮点，写 NVS 置 valid，并触发 armctrl 空闲重载（免重启） | `{saved:bool}` |
-| `/arm_grade` | GET | `?g=0..4` 设安全级；无参查询 | `{grade:N}` |
-| `/arm_run` | GET | `?on=1|0` 启停一轮抓取循环 | `{running:bool}` |
-| `/arm_test` | GET | 手动发裸腕舵机 #004 测试序列（中位→摆→回中，含 ~1.4s 阻塞） | `{sent:bool,err}` |
-| `/arm_auto` | GET | `?on=1|0` 自动发送意向位；无参查询 | `{auto_send:bool}` |
+| `/arm_run` | GET | `?on=1|0&cont=1|0` 启停抓取循环；`cont=1` 完整循环后不停,继续下一轮 | `{running:bool,cont:bool}` |
+| `/arm_estop` | GET | `?on=1` 立即急停并锁存(发 `$DST:0!`)；`?on=0` 清除锁存 | `{estopped:bool}` |
 
-操作页（`/` root）已加 **G 级下拉 + 抓取启动/停止** 按钮，直连 `/arm_grade`、`/arm_run`。
+操作页（`/` root）有**连续模式勾选 + 抓取启动/停止 + 急停**按钮，直连 `/arm_run`、`/arm_estop`。

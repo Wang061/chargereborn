@@ -35,6 +35,7 @@
 ## 3. 已知的表述纠正
 
 - `chargereborn-dashboard/DEFENSE_GUIDE.md` 第 27 行答辩话术提到"Brain 再通过 ESP-NOW 通知机械臂控制端停机"——**本项目没有 ESP-NOW**，Brain→KM1 是直接 UART（GPIO1→KM1 RX2/GPIO41）。答辩话术需要改成"Brain 经 UART 直接向机械臂控制板发送急停指令"，避免被现场提问戳穿。
+- `chargereborn-dashboard/PROTOCOL.md` 第 46 行也有同样的 ESP-NOW 错误表述——修正话术时两处一起改（PROTOCOL.md 是队友维护的文件，由队友自己改，这里只负责提醒）。
 
 ## 4. 验证步骤（分阶段，不要一把梭）
 

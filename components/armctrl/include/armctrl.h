@@ -30,7 +30,7 @@ typedef struct {
     int64_t  t_picked_us;        // pick_sequence 成功时刻(失败为0)
     int64_t  t_cut_us;           // cut_sequence 成功时刻(未到达/失败为0)
     int64_t  t_placed_us;        // place_back 完成时刻(失败也记录尝试完成的时刻;为0表示未到达)
-    bool     ok;                 // 本轮是否完整成功(pick+cut+place 全过)
+    bool     ok;                 // 本轮是否完整成功(pick+cut成功且完成place尝试;place_back失败不翻false,与"放回失败非致命"流程一致)
 } armctrl_cycle_log_t;
 
 typedef void (*armctrl_event_cb_t)(const armctrl_cycle_log_t *log, void *arg);
