@@ -13,15 +13,12 @@
 static const char *TAG = "armctrl";
 
 static armcal_t s_cal;
-static volatile int  s_grade = 0;       // 0..4, 默认最保守
 static volatile bool s_run = false;     // 抓取循环开关, 默认关
 static bool s_ik_ok = false;
 static volatile bool s_cal_dirty = false;   // /arm_calib POST 后置位, armctrl 空闲时重载标定(免重启)
 
 #define SETTLE_MS 200   // 步间稳定余量(ms), >= 保证舵机到位
 
-void armctrl_set_grade(int g) { if (g < 0) g = 0; if (g > 4) g = 4; s_grade = g; ESP_LOGW(TAG, "grade=%d", g); }
-int  armctrl_get_grade(void) { return s_grade; }
 void armctrl_request_run(bool on) { s_run = on; ESP_LOGW(TAG, "run=%d", on); }
 bool armctrl_is_running(void) { return s_run; }
 void armctrl_reload_cal(void) { s_cal_dirty = true; }   // 请求空闲时重载 NVS 标定(见 armctrl_task 空闲分支)
@@ -34,19 +31,17 @@ esp_err_t armctrl_move_arm(float x, float y, float z, int move_ms)
         ESP_LOGE(TAG, "不可达 (%.0f,%.0f,%.0f) — 安全停", x, y, z);
         return ESP_ERR_INVALID_ARG;
     }
-    // G1 慢速: 时长 x1.5
-    int mt = (s_grade <= 1) ? (move_ms * 3 / 2) : move_ms;
     char frame[96];
-    int len = armlink_encode_arm_frame(pwm, mt, frame, sizeof(frame));
+    int len = armlink_encode_arm_frame(pwm, move_ms, frame, sizeof(frame));
     if (len <= 0) return ESP_FAIL;
-    // 干跑条件: G0 或 未标定 —— 未标定时即使 grade 被中途拉高也绝不发字节(联锁第4道)
-    if (s_grade == 0 || !s_cal.valid) {
-        ESP_LOGW(TAG, "[G0-dry] 不发送(%s): %s", s_grade == 0 ? "grade=0 干跑" : "未标定", frame);
+    // 未标定时绝不发字节(安全联锁最后一道): "mm"是假坐标,不许驱动真舵机。
+    if (!s_cal.valid) {
+        ESP_LOGW(TAG, "[dry] 未标定,不发送: %s", frame);
     } else {
         armlink_uart_send(frame, len);
         ESP_LOGI(TAG, "arm->(%.0f,%.0f,%.0f) %s", x, y, z, frame);
     }
-    vTaskDelay(pdMS_TO_TICKS(mt + SETTLE_MS));
+    vTaskDelay(pdMS_TO_TICKS(move_ms + SETTLE_MS));
     return ESP_OK;
 #else
     ESP_LOGW(TAG, "UART 未启用, 忽略 move_arm");
@@ -60,8 +55,8 @@ void armctrl_move_servo(int idx, int pwm, int move_ms)
     char frame[32];
     int len = armlink_encode_servo_frame(idx, pwm, move_ms, frame, sizeof(frame));
     if (len > 0) {
-        if (s_grade == 0 || !s_cal.valid) {
-            ESP_LOGW(TAG, "[G0-dry] 不发送(%s): %s", s_grade == 0 ? "grade=0 干跑" : "未标定", frame);
+        if (!s_cal.valid) {
+            ESP_LOGW(TAG, "[dry] 未标定,不发送: %s", frame);
         } else {
             armlink_uart_send(frame, len);
             ESP_LOGI(TAG, "servo #%03d -> %d", idx, pwm);
@@ -207,29 +202,22 @@ static void go_observe(void)
     go_observe_ex(true);
 }
 
-// 状态机主体(T9-T11 逐步填); 本任务只做: 未就绪守卫 + 回观察位 + 占位。
+// 状态机主体: 未就绪守卫 -> 观察 -> 定位 -> 抓取 -> 切割 -> 放回 -> 回观察(完整流程, G分级已去除)。
 static void armctrl_task(void *arg)
 {
     (void)arg;
     while (1) {
-        // G0 干跑不需要标定(只核帧字节, 原语层已保证未标定不发 UART);
-        // grade>=1 实发仍要求 s_cal.valid —— 未标定的"mm"是假坐标, 不许驱动真舵机。
-        bool dry_ok = (s_grade == 0);
-        if (!s_run || !s_ik_ok || (!s_cal.valid && !dry_ok)) {
+        if (!s_run || !s_ik_ok || !s_cal.valid) {
             if (s_cal_dirty) {
                 s_cal_dirty = false;
                 armcal_load(&s_cal);
                 ESP_LOGI(TAG, "标定已重载 valid=%d", s_cal.valid);
             }
             if (s_run && !s_ik_ok) { ESP_LOGW(TAG, "run 被拒: IK 自检未过"); s_run = false; }
-            else if (s_run && !s_cal.valid) { ESP_LOGW(TAG, "run 被拒: 未标定(G0 干跑不受此限)"); s_run = false; }
+            else if (s_run && !s_cal.valid) { ESP_LOGW(TAG, "run 被拒: 未标定"); s_run = false; }
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
         }
-        if (!s_cal.valid) {
-            ESP_LOGW(TAG, "[G0-dry] 未标定: H=单位阵, px 当 mm 用, 仅核帧字节");
-        }
-        // T9-T11 在此填: 观察→定位→抓→切→放→回观察; 本步先回观察位并停。
         go_observe();
         float px, py, ang;
         if (!acquire_pose(&px, &py, &ang)) {
@@ -243,18 +231,9 @@ static void armctrl_task(void *arg)
             ESP_LOGW(TAG, "抓取失败, 回观察位");
             go_observe(); s_run = false; continue;
         }
-        if (s_grade < 4) {
-            // G3: 抓起后直接放回原位验证抓取(不切割)
-            armctrl_move_arm(mm_x, mm_y, s_cal.place_z, 1400);
-            armctrl_move_servo(5, s_cal.gripper_open_pwm, s_cal.gripper_time_ms);
-            go_observe();
-            s_run = false;
-            continue;
-        }
-        // G4: 抓起 -> 移刀口切割 -> 放回 -> 回观察位
+        // 切割: 抓起 -> 移刀口切割 -> 放回 -> 回观察位(G分级已去除,始终走完整含切流程)
         if (cut_sequence() != ESP_OK) {
             ESP_LOGW(TAG, "切割失败, 保持夹持撤离刀口回观察位(等人工取回)");
-            // 先尽力撤到刀口安全高度(失败也继续撤, 不能停在刀口): 返回值有意忽略
             (void)armctrl_move_arm(s_cal.blade_x, s_cal.blade_y, s_cal.blade_safe_z, 1400);
             go_observe_ex(false);   // 不开爪 —— 半切开的电池绝不在刀口旁松掉
             s_run = false;
@@ -265,7 +244,7 @@ static void armctrl_task(void *arg)
         }
         go_observe();
         ESP_LOGI(TAG, "完整循环完成");
-        s_run = false;   // 单轮; 连续分拣是 bonus, 改为 continue 即连续
+        s_run = false;   // 单轮; 连续模式在 Task 9 加(改这里的判断)
         vTaskDelay(pdMS_TO_TICKS(200));
     }
 }
@@ -277,6 +256,6 @@ esp_err_t armctrl_init(void)
     s_ik_ok = (kin_selftest() == 0);
     if (!s_ik_ok) ESP_LOGE(TAG, "IK 自检失败, 自动模式禁用");
     xTaskCreate(armctrl_task, "armctrl", 4096, NULL, 4, NULL);
-    ESP_LOGI(TAG, "init ok (grade=0,run=off,ik=%d,cal=%d)", s_ik_ok, s_cal.valid);
+    ESP_LOGI(TAG, "init ok (run=off,ik=%d,cal=%d)", s_ik_ok, s_cal.valid);
     return ESP_OK;
 }

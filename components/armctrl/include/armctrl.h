@@ -6,8 +6,6 @@ extern "C" {
 #endif
 
 esp_err_t armctrl_init(void);
-void armctrl_set_grade(int g);       // 0..4
-int  armctrl_get_grade(void);
 void armctrl_request_run(bool on);
 bool armctrl_is_running(void);
 void armctrl_reload_cal(void);        // 请求重载 NVS 标定(armctrl 空闲时生效, 免重启; 供 /arm_calib POST 后调用)

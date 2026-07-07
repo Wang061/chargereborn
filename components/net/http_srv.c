@@ -177,23 +177,6 @@ static esp_err_t arm_calib_get(httpd_req_t *req)
     return httpd_resp_send(req, buf, n);
 }
 
-// 安全级: /arm_grade?g=0..4 设置; 无参查询。
-static esp_err_t arm_grade_get(httpd_req_t *req)
-{
-    size_t qlen = httpd_req_get_url_query_len(req) + 1;
-    if (qlen > 1 && qlen < 32) {
-        char q[32], val[4];
-        if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK &&
-            httpd_query_key_value(q, "g", val, sizeof(val)) == ESP_OK) {
-            armctrl_set_grade(val[0] - '0');
-        }
-    }
-    char buf[48];
-    int n = snprintf(buf, sizeof(buf), "{\"grade\":%d}", armctrl_get_grade());
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_send(req, buf, n);
-}
-
 // 启停一轮抓取: /arm_run?on=1|0。
 static esp_err_t arm_run_get(httpd_req_t *req)
 {
@@ -277,8 +260,6 @@ void net_http_start(void)
     httpd_register_uri_handler(server, &calib_g);
     httpd_uri_t calib_p = { .uri = "/arm_calib", .method = HTTP_POST, .handler = arm_calib_get };
     httpd_register_uri_handler(server, &calib_p);
-    httpd_uri_t grade = { .uri = "/arm_grade", .method = HTTP_GET, .handler = arm_grade_get };
-    httpd_register_uri_handler(server, &grade);
     httpd_uri_t run = { .uri = "/arm_run", .method = HTTP_GET, .handler = arm_run_get };
     httpd_register_uri_handler(server, &run);
     ESP_LOGI(TAG, "http server up -> http://192.168.4.1/");
