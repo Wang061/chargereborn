@@ -8,7 +8,10 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_timer.h"
+#include "nvs.h"
 #include <math.h>
+#include <inttypes.h>
 
 static const char *TAG = "armctrl";
 
@@ -24,6 +27,57 @@ static volatile bool s_continuous = false;
 static float s_processed_px[8][2];   // 连续模式防重抓: 本次运行会话已处理目标的px中心
 static int   s_processed_count = 0;
 static int   s_acquire_fail_streak = 0;
+
+// —— dashboard 统计: 独立 NVS 命名空间"stats",与 armcal 完全隔离,不影响标定数据 ——
+#define STATS_NS  "stats"
+#define STATS_KEY "cnt"
+static uint32_t s_stats_total = 0;
+static uint32_t s_stats_session = 0;
+static armctrl_event_cb_t s_event_cb = NULL;
+static void *s_event_cb_arg = NULL;
+static uint32_t s_cycle_seq = 0;
+
+static void stats_load(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(STATS_NS, NVS_READONLY, &h) != ESP_OK) { s_stats_total = 0; return; }
+    uint32_t v = 0;
+    size_t sz = sizeof(v);
+    if (nvs_get_blob(h, STATS_KEY, &v, &sz) == ESP_OK && sz == sizeof(v)) s_stats_total = v;
+    else s_stats_total = 0;
+    nvs_close(h);
+}
+
+static void stats_save(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(STATS_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_blob(h, STATS_KEY, &s_stats_total, sizeof(s_stats_total));
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+void armctrl_set_event_cb(armctrl_event_cb_t cb, void *arg) { s_event_cb = cb; s_event_cb_arg = arg; }
+
+void armctrl_get_stats(uint32_t *out_total, uint32_t *out_session)
+{
+    if (out_total) *out_total = s_stats_total;
+    if (out_session) *out_session = s_stats_session;
+}
+
+static void emit_cycle_log(int64_t t_id, int64_t t_pick, int64_t t_cut, int64_t t_place, bool ok)
+{
+    if (!s_event_cb) return;
+    armctrl_cycle_log_t log = {
+        .seq_id = ++s_cycle_seq,
+        .t_identified_us = t_id,
+        .t_picked_us = t_pick,
+        .t_cut_us = t_cut,
+        .t_placed_us = t_place,
+        .ok = ok,
+    };
+    s_event_cb(&log, s_event_cb_arg);
+}
 
 void armctrl_request_run(bool on, bool cont) {
     if (on && s_estop) { ESP_LOGW(TAG, "run 被拒: 急停锁存中,先 /arm_estop?on=0 清除"); return; }
@@ -247,6 +301,7 @@ static void armctrl_task(void *arg)
             vTaskDelay(pdMS_TO_TICKS(300)); continue;
         }
         s_acquire_fail_streak = 0;
+        int64_t t_identified = esp_timer_get_time();
         armlink_track_suspend();   // 即将开始运动序列: 挂起跟踪器,直到下次 go_observe_ex 内部 resume
         float mm_x, mm_y;
         homography_apply(s_cal.H, px, py, &mm_x, &mm_y);
@@ -254,19 +309,25 @@ static void armctrl_task(void *arg)
         ESP_LOGI(TAG, "定位: px(%.1f,%.1f)->mm(%.1f,%.1f) angW=%.1f", px, py, mm_x, mm_y, world_ang);
         if (pick_sequence(mm_x, mm_y, world_ang) != ESP_OK) {
             ESP_LOGW(TAG, "抓取失败, 回观察位");
+            emit_cycle_log(t_identified, 0, 0, 0, false);
             go_observe(); s_run = false; continue;
         }
+        int64_t t_picked = esp_timer_get_time();
         // 切割: 抓起 -> 移刀口切割 -> 放回 -> 回观察位(G分级已去除,始终走完整含切流程)
         if (cut_sequence() != ESP_OK) {
             ESP_LOGW(TAG, "切割失败, 保持夹持撤离刀口回观察位(等人工取回)");
+            emit_cycle_log(t_identified, t_picked, 0, 0, false);
             (void)armctrl_move_arm(s_cal.blade_x, s_cal.blade_y, s_cal.blade_safe_z, 1400);
             go_observe_ex(false);   // 不开爪 —— 半切开的电池绝不在刀口旁松掉
             s_run = false;
             continue;
         }
+        int64_t t_cut = esp_timer_get_time();
         if (place_back(mm_x, mm_y) != ESP_OK) {
             ESP_LOGW(TAG, "放回失败");
         }
+        int64_t t_placed = esp_timer_get_time();
+        emit_cycle_log(t_identified, t_picked, t_cut, t_placed, true);
         // 记录本次目标 px 中心到防重抓排除表(px域: 放回原位后,同一观察位下一轮会在同一像素
         // 位置再次被检出;记 px 而非 mm 是零坐标转换的最简方案)。
         if (s_processed_count < 8) {
@@ -275,8 +336,11 @@ static void armctrl_task(void *arg)
             s_processed_count++;
             armlink_set_exclusions(s_processed_px, s_processed_count);
         }
+        s_stats_total++;
+        s_stats_session++;
+        stats_save();
         go_observe();
-        ESP_LOGI(TAG, "完整循环完成");
+        ESP_LOGI(TAG, "完整循环完成(累计%" PRIu32 "/本次%" PRIu32 ")", s_stats_total, s_stats_session);
         if (!s_continuous) {
             s_run = false;
         }
@@ -290,7 +354,8 @@ esp_err_t armctrl_init(void)
     if (e != ESP_OK) ESP_LOGW(TAG, "标定未就绪(valid=false), 自动模式将被拒绝");
     s_ik_ok = (kin_selftest() == 0);
     if (!s_ik_ok) ESP_LOGE(TAG, "IK 自检失败, 自动模式禁用");
+    stats_load();
     xTaskCreate(armctrl_task, "armctrl", 4096, NULL, 4, NULL);
-    ESP_LOGI(TAG, "init ok (run=off,ik=%d,cal=%d)", s_ik_ok, s_cal.valid);
+    ESP_LOGI(TAG, "init ok (run=off,ik=%d,cal=%d,stats_total=%" PRIu32 ")", s_ik_ok, s_cal.valid, s_stats_total);
     return ESP_OK;
 }
