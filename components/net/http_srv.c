@@ -94,7 +94,12 @@ static esp_err_t status_get(httpd_req_t *req)
     return httpd_resp_send(req, buf, n);
 }
 
+// 仅用于网页叠加显示的原始框门限(与跟踪器喂料门限0.25独立;跟踪器仍吃0.25-1.0全量弱框)。
+#define DETECT_OVERLAY_MIN_SCORE 0.40f
+
 // 实时检测结果（JSON）。读 ai 缓存(生产者=main 的 detect_task)，不触发相机/推理，故 handler 轻。
+// 注: "n"字段报告的是本帧原始检出总数(含弱框,供诊断参考);"boxes"数组只含>=0.40的框(网页叠加用),
+// 两者数量可能不等——这是有意为之,不是bug。
 static esp_err_t detect_get(httpd_req_t *req)
 {
     ai_result_t r;
@@ -103,12 +108,15 @@ static esp_err_t detect_get(httpd_req_t *req)
     int n = snprintf(buf, sizeof(buf),
         "{\"w\":%d,\"h\":%d,\"infer_ms\":%u,\"n\":%d,\"boxes\":[",
         r.src_w, r.src_h, (unsigned)r.infer_ms, r.count);
+    int written = 0;
     for (int i = 0; i < r.count && n < (int)sizeof(buf) - 128; i++) {
+        if (r.boxes[i].score < DETECT_OVERLAY_MIN_SCORE) continue;
         n += snprintf(buf + n, sizeof(buf) - n,
             "%s{\"name\":\"%s\",\"s\":%.2f,\"x1\":%d,\"y1\":%d,\"x2\":%d,\"y2\":%d,\"a\":%.1f,\"aniso\":%.2f}",
-            i ? "," : "", ai_class_name(r.boxes[i].cls), r.boxes[i].score,
+            written ? "," : "", ai_class_name(r.boxes[i].cls), r.boxes[i].score,
             r.boxes[i].x1, r.boxes[i].y1, r.boxes[i].x2, r.boxes[i].y2,
             r.boxes[i].angle_deg, r.boxes[i].anisotropy);
+        written++;
     }
     n += snprintf(buf + n, sizeof(buf) - n, "]}");
     httpd_resp_set_type(req, "application/json");
