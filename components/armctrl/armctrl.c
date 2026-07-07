@@ -20,11 +20,24 @@ static volatile bool s_estop = false;   // 急停锁存; 置位后拒绝任何�
 
 #define SETTLE_MS 200   // 步间稳定余量(ms), >= 保证舵机到位
 
-void armctrl_request_run(bool on) {
+static volatile bool s_continuous = false;
+static float s_processed_px[8][2];   // 连续模式防重抓: 本次运行会话已处理目标的px中心
+static int   s_processed_count = 0;
+static int   s_acquire_fail_streak = 0;
+
+void armctrl_request_run(bool on, bool cont) {
     if (on && s_estop) { ESP_LOGW(TAG, "run 被拒: 急停锁存中,先 /arm_estop?on=0 清除"); return; }
     s_run = on;
-    ESP_LOGW(TAG, "run=%d", on);
+    s_continuous = cont;
+    if (on) {
+        s_processed_count = 0;
+        s_acquire_fail_streak = 0;
+        armlink_set_exclusions(NULL, 0);   // 新会话: 清空上一次运行留下的排除点
+    }
+    ESP_LOGW(TAG, "run=%d cont=%d", on, cont);
 }
+
+bool armctrl_is_continuous(void) { return s_continuous; }
 
 void armctrl_estop(void)
 {
@@ -224,8 +237,16 @@ static void armctrl_task(void *arg)
         go_observe();
         float px, py, ang;
         if (!acquire_pose(&px, &py, &ang)) {
-            ESP_LOGW(TAG, "位姿不稳, 重试"); vTaskDelay(pdMS_TO_TICKS(300)); continue;
+            ESP_LOGW(TAG, "位姿不稳, 重试");
+            s_acquire_fail_streak++;
+            if (s_acquire_fail_streak >= 3) {
+                ESP_LOGW(TAG, "连续3次未能稳定获取目标,自动停止");
+                s_run = false;
+                s_acquire_fail_streak = 0;
+            }
+            vTaskDelay(pdMS_TO_TICKS(300)); continue;
         }
+        s_acquire_fail_streak = 0;
         armlink_track_suspend();   // 即将开始运动序列: 挂起跟踪器,直到下次 go_observe_ex 内部 resume
         float mm_x, mm_y;
         homography_apply(s_cal.H, px, py, &mm_x, &mm_y);
@@ -246,9 +267,19 @@ static void armctrl_task(void *arg)
         if (place_back(mm_x, mm_y) != ESP_OK) {
             ESP_LOGW(TAG, "放回失败");
         }
+        // 记录本次目标 px 中心到防重抓排除表(px域: 放回原位后,同一观察位下一轮会在同一像素
+        // 位置再次被检出;记 px 而非 mm 是零坐标转换的最简方案)。
+        if (s_processed_count < 8) {
+            s_processed_px[s_processed_count][0] = px;
+            s_processed_px[s_processed_count][1] = py;
+            s_processed_count++;
+            armlink_set_exclusions(s_processed_px, s_processed_count);
+        }
         go_observe();
         ESP_LOGI(TAG, "完整循环完成");
-        s_run = false;   // 单轮; 连续模式在 Task 9 加(改这里的判断)
+        if (!s_continuous) {
+            s_run = false;
+        }
         vTaskDelay(pdMS_TO_TICKS(200));
     }
 }

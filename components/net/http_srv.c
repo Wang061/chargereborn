@@ -185,19 +185,23 @@ static esp_err_t arm_calib_get(httpd_req_t *req)
     return httpd_resp_send(req, buf, n);
 }
 
-// 启停一轮抓取: /arm_run?on=1|0。
+// 启停一轮/连续抓取: /arm_run?on=1|0&cont=1|0。
 static esp_err_t arm_run_get(httpd_req_t *req)
 {
     size_t qlen = httpd_req_get_url_query_len(req) + 1;
     if (qlen > 1 && qlen < 32) {
-        char q[32], val[4];
-        if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK &&
-            httpd_query_key_value(q, "on", val, sizeof(val)) == ESP_OK) {
-            armctrl_request_run(val[0] == '1');
+        char q[32], val_on[4], val_cont[4];
+        if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK) {
+            int on = -1, cont = 0;
+            if (httpd_query_key_value(q, "on", val_on, sizeof(val_on)) == ESP_OK) on = (val_on[0] == '1');
+            if (httpd_query_key_value(q, "cont", val_cont, sizeof(val_cont)) == ESP_OK) cont = (val_cont[0] == '1');
+            if (on >= 0) armctrl_request_run(on != 0, cont != 0);
         }
     }
-    char buf[48];
-    int n = snprintf(buf, sizeof(buf), "{\"running\":%s}", armctrl_is_running() ? "true" : "false");
+    char buf[64];
+    int n = snprintf(buf, sizeof(buf), "{\"running\":%s,\"cont\":%s}",
+                     armctrl_is_running() ? "true" : "false",
+                     armctrl_is_continuous() ? "true" : "false");
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, n);
 }
