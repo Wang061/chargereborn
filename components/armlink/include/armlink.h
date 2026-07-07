@@ -12,6 +12,8 @@ extern "C" {
 // 机械臂目标：从检测结果流里,经内建目标跟踪器(target_track)滤波后的"最佳电池"位姿。
 typedef struct {
     bool     valid;            // 跟踪器已 confirmed(连续命中数达标)
+    bool     seen;             // 跟踪器已初始化(首个过门限帧后即真): 估计只可用于"显示"。
+                               // 网页灰十字数据源, 比 confirmed 早 ~2 帧; armctrl 不消费此位。
     bool     stable;           // 已过稳定判据(含滞回); acquire_pose 据此判断可以动臂
     bool     coasting;         // 本帧靠滑行(丢检期间),不可用于开始新动作
     float    center_x_px;      // 滤波后中心 x(640x480 源像素)

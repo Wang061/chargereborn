@@ -68,19 +68,20 @@ static esp_err_t root_get(httpd_req_t *req)
         "dx=Math.cos(th)*L/2,dy=Math.sin(th)*L/2;"
         "g.strokeStyle='#f00';g.beginPath();g.moveTo(cxp-dx,cyp-dy);g.lineTo(cxp+dx,cyp+dy);g.stroke();"
         "g.strokeStyle='#0f0';g.fillText(b.a.toFixed(0),cxp+4,cyp-4);}}}"
-        // 跟踪器标记: 画在原始框之上——十字+圆+角度线, 青=STABLE(臂可动) 橙=跟踪中/滑行。
+        // 跟踪器标记: 画在原始框之上——十字+圆+角度线。三色:
+        // 灰=seen(刚初始化,~0.8s,仅显示) 橙=valid(已确认) 青=STABLE(臂可动)。
         // 网页上"框会动的是原始检测(>=0.40), 十字是臂真正瞄准的滤波目标", 两层含义不同。
         "function drawTrk(tk){var cv=document.getElementById('ov'),g=cv.getContext('2d');"
         "var el=document.getElementById('ts');"
-        "if(!tk.valid){el.textContent='目标:无';return;}"
+        "if(!tk.seen){el.textContent='目标:无';return;}"
         "var sx=cv.width/tk.w,sy=cv.height/tk.h,x=tk.cx*sx,y=tk.cy*sy;"
-        "var col=tk.stable?'#0cf':'#fa0';g.lineWidth=3;g.strokeStyle=col;"
+        "var col=tk.stable?'#0cf':(tk.valid?'#fa0':'#999');g.lineWidth=3;g.strokeStyle=col;"
         "g.beginPath();g.arc(x,y,25,0,6.283);g.stroke();"
         "g.beginPath();g.moveTo(x-32,y);g.lineTo(x+32,y);g.moveTo(x,y-32);g.lineTo(x,y+32);g.stroke();"
         "var th=tk.angle_deg*Math.PI/180;"
         "g.beginPath();g.moveTo(x-Math.cos(th)*45,y-Math.sin(th)*45);"
         "g.lineTo(x+Math.cos(th)*45,y+Math.sin(th)*45);g.stroke();"
-        "el.textContent='目标:'+(tk.stable?'稳定':(tk.coasting?'滑行':'跟踪'))+' s='+tk.score.toFixed(2);}"
+        "el.textContent='目标:'+(tk.stable?'稳定':(tk.valid?(tk.coasting?'滑行':'跟踪'):'捕获中'))+' s='+tk.score.toFixed(2);}"
         "function poll(){fetch('/detect').then(function(r){return r.json();}).then(function(d){draw(d);"
         "return fetch('/arm_target');}).then(function(r){return r.json();}).then(drawTrk).catch(function(){});}"
         "function dtog(){var b=document.getElementById('det');"
@@ -144,21 +145,24 @@ static esp_err_t detect_get(httpd_req_t *req)
 }
 
 // 机械臂目标（JSON）。读 armlink 缓存（生产者=detect_task），不触发相机/推理。
+// seen=跟踪器已初始化(几何字段可用,仅供显示); valid=confirmed(臂侧候选); stable=臂可动。
 static esp_err_t arm_target_get(httpd_req_t *req)
 {
     arm_target_t t;
     armlink_get_last_target(&t);
     char buf[256];
     int n;
-    if (t.valid) {
+    if (t.seen) {
         n = snprintf(buf, sizeof(buf),
-            "{\"valid\":true,\"stable\":%s,\"coasting\":%s,\"cx\":%.1f,\"cy\":%.1f,"
+            "{\"valid\":%s,\"seen\":true,\"stable\":%s,\"coasting\":%s,\"cx\":%.1f,\"cy\":%.1f,"
             "\"angle_deg\":%.1f,\"score\":%.2f,\"w\":%u,\"h\":%u,\"frame_id\":%u}",
+            t.valid ? "true" : "false",
             t.stable ? "true" : "false", t.coasting ? "true" : "false",
             t.center_x_px, t.center_y_px, t.angle_deg, t.score,
             (unsigned)t.src_w, (unsigned)t.src_h, (unsigned)t.frame_id);
     } else {
-        n = snprintf(buf, sizeof(buf), "{\"valid\":false,\"frame_id\":%u}", (unsigned)t.frame_id);
+        n = snprintf(buf, sizeof(buf), "{\"valid\":false,\"seen\":false,\"frame_id\":%u}",
+                     (unsigned)t.frame_id);
     }
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, n);

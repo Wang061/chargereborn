@@ -65,6 +65,7 @@ void armlink_update_from_ai(const ai_result_t *r)
     t.src_w       = (uint32_t)r->src_w;
     t.src_h       = (uint32_t)r->src_h;
     t.valid       = out.confirmed;
+    t.seen        = out.hits > 0;   // 已初始化即真(hits在reset/LOST时归零), 供网页灰十字
     t.stable      = out.stable;
     t.coasting    = out.coasting;
     t.center_x_px = out.cx;
@@ -102,6 +103,7 @@ void armlink_track_resume(void)
     // 不清 s_last 的话 acquire_pose 首轮轮询(60ms)会吃到复位前遗留的 stable 快照
     // (2026-07-07 上板实测: pose ok 与 resume 同 tick 出现,物理上不可能——STABLE 需≥10帧)。
     s_last.valid = false;
+    s_last.seen = false;
     s_last.stable = false;
     s_last.coasting = false;
     s_last.frame_id++;
