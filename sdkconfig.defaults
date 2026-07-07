@@ -13,11 +13,11 @@ CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
 # ---- 调试期友好（栈溢出检测；panic 默认打印寄存器+回溯后重启）----
 CONFIG_COMPILER_STACK_CHECK_MODE_NORM=y
 
-# ---- esp-dl ESPDet 模型嵌入 app rodata（M5 单类 18650 模型）----
+# ---- esp-dl ESPDet4 模型嵌入 app rodata（4类电池模型）----
 # 注: <model>_detect 的 flash_partition CMake 调 add_<model>_target,在本地 esp-dl 3.3.5 下该宏已移除 → 配置报错;故用 rodata(已验证)。
-CONFIG_ESPDET_DETECT_MODEL_IN_FLASH_RODATA=y
-CONFIG_FLASH_ESPDET_PICO_224_224_BATTERY=y
-CONFIG_ESPDET_PICO_224_224_BATTERY=y
+CONFIG_ESPDET4_DETECT_MODEL_IN_FLASH_RODATA=y
+CONFIG_FLASH_ESPDET_PICO_224_224_BATTERY4=y
+CONFIG_ESPDET_PICO_224_224_BATTERY4=y
 
 # ---- armlink: Brain→Steward(KM1) UART 命令链路（Phase1 联调）----
 # UART 硬件启用，但"每帧自动发坐标驱动臂"由运行时开关 s_auto_send 控制（默认关，见 armlink.c）。
@@ -28,4 +28,3 @@ CONFIG_ARMLINK_UART_PORT_NUM=1
 CONFIG_ARMLINK_UART_TX_GPIO=1
 CONFIG_ARMLINK_UART_RX_GPIO=-1
 CONFIG_ARMLINK_UART_BAUD=115200
-CONFIG_ARMLINK_PROTO_KMS=y
