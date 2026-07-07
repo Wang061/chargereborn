@@ -31,7 +31,7 @@
 **做**：
 1. 删除清单（§3）全量执行，每批删完立即 build。
 2. `armlink` 内建纯 C 目标跟踪器（§4）+ host 单测对拍（当晚日志场景做成永久测试向量）。
-3. armctrl 状态机终态化（§5）：去 G 化、单轮含切、连续开关、急停（$DST!）、连续模式防重抓。
+3. armctrl 状态机终态化（§5）：去 G 化、单轮含切、连续开关、急停（$DST:0!）、连续模式防重抓。
 4. net 端点收敛（§6）；armctrl 事件钩子 + 统计计数（§7）。
 5. 《dashboard 对接计划书》`docs/ai/DASHBOARD_INTEGRATION.md`（§7）。
 6. 文档终态化 + merge master + 分区收缩（最后）+ tag（§9）。
@@ -138,7 +138,7 @@ IDLE ─(run)→ OBSERVE(go_observe + track_resume) → ACQUIRE(等 STABLE, 超�
   → s_continuous ? OBSERVE : (s_run=false → IDLE)
 ```
 
-- **急停**：`armctrl_estop()` = 立即 UART 发 `$DST!`（CRASH_SIGNATURES 记录 $DST: 系列真机可动，§8⑤ 专项复验）→ 中止当前序列 → `s_estop` 锁存（`/arm_estop?on=0` 清除后才能再 run）。每个运动原语之间检查锁存位。
+- **急停**：`armctrl_estop()` = 立即 UART 发 **`$DST:0!`**（**订正 2026-07-07**：唯一真机验证过的急停串——CRASH_SIGNATURES 2026-07-02 COM4 直连回显+派发确认，KM1 内部重路由到 `#000PDST!`。此前 SAFETY.md/本文档误写裸 `$DST!`，那串从未在真机测试里出现过，`Ygloves-Km1` 参考码里的 `$DST!` 是手套侧日志输出而非 KM1 收指令确证，不可采信；用户已拍板用 `$DST:0!`）→ 中止当前序列 → `s_estop` 锁存（`/arm_estop?on=0` 清除后才能再 run）。每个运动原语之间检查锁存位。
 - **安全三道保留**：编译门 `CONFIG_ARMLINK_UART_ENABLE`；`kin_selftest` 失败或 `!s_cal.valid` 拒 run（原语层"未标定不发字节"兜底照旧）；run 默认 off、单轮结束自动复位。
 - **切割失败保持夹持撤离**（撤到 blade_safe_z → 不开爪回观察位）原样保留。
 - **连续模式**：`/arm_run?on=1&cont=1`。防重抓同一颗（放回原位后会再次被检出）：抓取时刻把目标**px 中心**记入本次上电内存"已处理表"（≤8 项，px 域——同一观察位下放回原位的电池 px 不变，零坐标转换）；`track_resume` 前经 `track_set_exclusions()` 下发，跟踪器**初始化**排除已处理点 60px 半径内候选（滤波更新不受影响）；连续 3 次 ACQUIRE 超时 → 自动停。**armcal_t/NVS 布局不动**（H 保命线）。
@@ -179,7 +179,7 @@ handler 数 11→10（`max_uri_handlers=16` 余量足）；`stack_size=8192` 不
    ② **重放当晚失败场景**（run → 回观察位 → 采位姿）→ STABLE 一次建立、零"位姿不稳"循环；
    ③ 真电池单轮无刀：抓→抬→放回 ≥8/10；
    ④ 装刀含切割完整单轮；
-   ⑤ 连续模式 2-3 颗 + **急停实测**（$DST! 真机响应；不符则急停降级为软停 + 断动力电话术）。
+   ⑤ 连续模式 2-3 颗 + **急停实测**（$DST:0! 真机响应；不符则急停降级为软停 + 断动力电话术）。
 4. 回归防线：`kin_selftest` golden 不动；当晚日志场景永久留在 host 测试。
 
 ## 9. 提交收尾顺序（严格按序）
@@ -196,7 +196,7 @@ handler 数 11→10（`max_uri_handlers=16` 余量足）；`stack_size=8192` 不
 |---|---|
 | ai 门限降 0.25 放进更多误检 | 只喂跟踪器不上显示；空间门限 + min_hits 挡；实测误锁再回调 0.30 |
 | 跟踪器参数水土不服 | λ 单旋钮 + §8① 30 分钟实标流程；host 向量先行兜底 |
-| $DST! 真机行为与记录不符 | §8⑤ 专项实测；不符则降级软停 |
+| $DST:0! 真机行为与记录不符 | §8⑤ 专项实测；不符则降级软停 |
 | 分区收缩烧录翻车 | 放最后；boot check + 标定回读；回退 = 旧 partitions.csv 重烧即恢复 |
 | 删除误伤隐性引用 | 每删一批立即 build；grep 零残留自查（§3 已预核引用闭合） |
 | 时间不够 | §9 步 2 的 ③ 为底线；④⑤ 可降级为报告叙述 |
