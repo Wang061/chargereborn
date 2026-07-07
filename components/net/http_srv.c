@@ -33,6 +33,7 @@ static esp_err_t root_get(httpd_req_t *req)
         "<button onclick='arun(1)'>抓取启动</button> "
         "<button onclick='arun(0)'>停止</button> "
         "<button onclick='aestop()' style='background:#c00;color:#fff'>急停</button> "
+        "<button onclick='aclear()'>恢复</button> "
         "<span id=gs>-</span></div>"
         "<p style='position:relative;display:inline-block;line-height:0'>"
         "<img id=v style='max-width:96vw;display:block'>"
@@ -73,9 +74,14 @@ static esp_err_t root_get(httpd_req_t *req)
         "dt=setInterval(poll,180);b.textContent='识别停止';}"
         "function arun(on){var c=document.getElementById('cont').checked?1:0;"
         "fetch('/arm_run?on='+on+'&cont='+c).then(function(r){return r.json();}).then(function(d){"
-        "document.getElementById('gs').textContent=d.running?(d.cont?'连续运行中':'运行中'):'已停止';});}"
+        "document.getElementById('gs').textContent=d.running?(d.cont?'连续运行中':'运行中')"
+        ":(on&&d.estopped?'被拒:急停锁存中(点恢复)':(on?'未启动':'已停止'));}).catch(function(){"
+        "document.getElementById('gs').textContent='请求失败';});}"
         "function aestop(){fetch('/arm_estop?on=1').then(function(r){return r.json();}).then(function(d){"
-        "document.getElementById('gs').textContent='已急停';});}"
+        "document.getElementById('gs').textContent='已急停';}).catch(function(){"
+        "document.getElementById('gs').textContent='急停请求失败!立即断电!';});}"
+        "function aclear(){fetch('/arm_estop?on=0').then(function(r){return r.json();}).then(function(d){"
+        "document.getElementById('gs').textContent=d.estopped?'仍锁存':'已恢复';}).catch(function(){});}"
         "document.getElementById('v').src='http://'+location.hostname+':81/stream';"
         "</script></body></html>";
     httpd_resp_set_type(req, "text/html");
@@ -199,14 +205,15 @@ static esp_err_t arm_run_get(httpd_req_t *req)
         }
     }
     char buf[64];
-    int n = snprintf(buf, sizeof(buf), "{\"running\":%s,\"cont\":%s}",
+    int n = snprintf(buf, sizeof(buf), "{\"running\":%s,\"cont\":%s,\"estopped\":%s}",
                      armctrl_is_running() ? "true" : "false",
-                     armctrl_is_continuous() ? "true" : "false");
+                     armctrl_is_continuous() ? "true" : "false",
+                     armctrl_is_estopped() ? "true" : "false");
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, n);
 }
 
-// 急停: /arm_estop?on=1 立即停止并锁存; ?on=0 清除锁存(之后才能再次 run)。
+// 急停: /arm_estop?on=1 立即停止并锁存; on=0 显式清除锁存; 其余值(含无参)=纯查询不改状态。
 static esp_err_t arm_estop_get(httpd_req_t *req)
 {
     size_t qlen = httpd_req_get_url_query_len(req) + 1;
@@ -215,7 +222,7 @@ static esp_err_t arm_estop_get(httpd_req_t *req)
         if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK &&
             httpd_query_key_value(q, "on", val, sizeof(val)) == ESP_OK) {
             if (val[0] == '1') armctrl_estop();
-            else armctrl_clear_estop();
+            else if (val[0] == '0') armctrl_clear_estop();   // 仅显式0清锁,防误触
         }
     }
     char buf[48];
