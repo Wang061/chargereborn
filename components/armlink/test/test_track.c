@@ -256,6 +256,74 @@ static void test_gate_before_score_pick(void) {
     CHECK(fabsf(out.cx - 330.5f) < 5.0f, "must update toward the in-gate lower-score candidate(332,182), not the out-of-gate one");
 }
 
+// ---- 测试10: 初始化排除区(连续模式防重抓)——排除点60px内候选不得新建轨迹,已确认轨迹更新不受影响 ----
+static void test_exclusion_zone(void) {
+    // Part A: 排除点半径内的候选不得初始化轨迹(排除区设置在resume之前,匹配armctrl真实调用序)
+    track_state_t tr;
+    track_init(&tr);
+    float excl[1][2] = {{330.0f, 182.0f}};
+    track_set_exclusions(&tr, excl, 1);
+    track_resume(&tr, 0);   // resume不得清掉排除区(跨轮状态)
+    int64_t ts = 0;
+    for (int i = 0; i < 5; i++) {
+        track_box_t b = { .cx=340, .cy=190, .w=165, .h=60, .angle_deg=-1, .score=0.73f, .anisotropy=0 };  // 距排除点~12.8px<60px
+        ts += 250000;
+        track_update(&tr, &b, 1, ts);
+    }
+    track_output_t out; track_get(&tr, &out);
+    CHECK(!out.confirmed, "candidate within 60px of an exclusion point must never initialize a track");
+
+    // Part B: 排除区只管"新建",不管"更新"——已确认轨迹哪怕正好落在排除点上也照常更新
+    track_state_t tr2;
+    track_init(&tr2);
+    track_resume(&tr2, 0);
+    ts = 0;
+    for (int i = 0; i < 3; i++) {
+        track_box_t b = { .cx=330, .cy=182, .w=165, .h=60, .angle_deg=-1, .score=0.73f, .anisotropy=0 };
+        ts += 250000;
+        track_update(&tr2, &b, 1, ts);
+    }
+    track_output_t out2; track_get(&tr2, &out2);
+    CHECK(out2.confirmed && out2.hits == 3, "must be confirmed before exclusion-on-update probe");
+    track_set_exclusions(&tr2, excl, 1);   // 排除点=轨迹当前位置(Task9真实场景:刚处理完的电池)
+    ts += 250000;
+    track_box_t b2 = { .cx=330, .cy=182, .w=165, .h=60, .angle_deg=-1, .score=0.73f, .anisotropy=0 };
+    track_update(&tr2, &b2, 1, ts);
+    track_get(&tr2, &out2);
+    CHECK(out2.hits == 4 && !out2.coasting, "confirmed track sitting inside an exclusion zone must still receive updates(exclusion governs initialization only)");
+}
+
+// ---- 测试11: suspend期间update整帧忽略;resume=硬重置+新gate时间戳 ----
+static void test_suspend_resume(void) {
+    track_state_t tr;
+    track_init(&tr);
+    track_resume(&tr, 0);
+    int64_t ts = 0;
+    for (int i = 0; i < 3; i++) {
+        track_box_t b = { .cx=330, .cy=182, .w=165, .h=60, .angle_deg=-1, .score=0.73f, .anisotropy=0 };
+        ts += 250000;
+        track_update(&tr, &b, 1, ts);
+    }
+    track_output_t out; track_get(&tr, &out);
+    CHECK(out.confirmed, "must be confirmed before suspend probe");
+
+    track_suspend(&tr);
+    ts += 250000;
+    track_box_t moved = { .cx=100, .cy=400, .w=165, .h=60, .angle_deg=-1, .score=0.95f, .anisotropy=0 };
+    bool accepted = track_update(&tr, &moved, 1, ts);
+    CHECK(!accepted, "suspended tracker must ignore updates entirely");
+    track_get(&tr, &out);
+    CHECK(fabsf(out.cx - 330.0f) < 5.0f, "suspended tracker's estimate must be untouched by ignored frames");
+
+    // resume=硬重置: confirmed清零,且resume前(臂运动期间)拍的帧被gate拒收
+    int64_t resume_ts = ts + 1000000;
+    track_resume(&tr, resume_ts);
+    track_get(&tr, &out);
+    CHECK(!out.confirmed, "resume must hard-reset(confirmed cleared, fresh capture cycle)");
+    accepted = track_update(&tr, &moved, 1, resume_ts - 500000);   // 臂运动中拍的旧帧
+    CHECK(!accepted, "frames captured before resume gate_ts must be rejected after resume");
+}
+
 int main(void) {
     test_motion_frame_rejected();
     test_class_flip_no_jump();
@@ -266,6 +334,8 @@ int main(void) {
     test_angle_wraparound();
     test_dual_threshold_boundary();
     test_gate_before_score_pick();
+    test_exclusion_zone();
+    test_suspend_resume();
     printf(fails ? "\n%d FAILED\n" : "\nALL PASS\n", fails);
     return fails ? 1 : 0;
 }

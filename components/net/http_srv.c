@@ -131,10 +131,10 @@ static esp_err_t arm_target_get(httpd_req_t *req)
     char buf[256];
     int n;
     if (t.valid) {
-        // wrist_deg 本步未标定，恒输出 null（标定后改真实值）
         n = snprintf(buf, sizeof(buf),
-            "{\"valid\":true,\"cx\":%.1f,\"cy\":%.1f,\"angle_deg\":%.1f,\"score\":%.2f,"
-            "\"wrist_deg\":null,\"w\":%u,\"h\":%u,\"frame_id\":%u}",
+            "{\"valid\":true,\"stable\":%s,\"coasting\":%s,\"cx\":%.1f,\"cy\":%.1f,"
+            "\"angle_deg\":%.1f,\"score\":%.2f,\"w\":%u,\"h\":%u,\"frame_id\":%u}",
+            t.stable ? "true" : "false", t.coasting ? "true" : "false",
             t.center_x_px, t.center_y_px, t.angle_deg, t.score,
             (unsigned)t.src_w, (unsigned)t.src_h, (unsigned)t.frame_id);
     } else {
