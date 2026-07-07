@@ -66,54 +66,30 @@ void armctrl_move_servo(int idx, int pwm, int move_ms)
 #endif
 }
 
-#define POSE_FRAMES 5
-#define POSE_INTERVAL_MS 60
-#define POSE_FRESH_TIMEOUT_MS 1500
-#define POSE_CENTER_RANGE_PX 12.0f  // 2026-07-06 由4px放宽: 4px在640x480实拍下过严,量化噪声+像素抖动易频繁触发"位姿不稳"重试
-#define POSE_ANGLE_RANGE_DEG 12.0f
+// 等待 armlink 内建跟踪器(target_track)进入 STABLE(见 armlink/target_track.h),超时判失败。
+// 旧的"5帧中心/角度抖动窗口"逻辑已整体退役——抖动判定、时间门限、丢检滑行现全部
+// 在 target_track 内部完成(见 docs/superpowers/specs/2026-07-06-final-submission-cleanup-design.md §4.6)。
+#define ACQUIRE_TIMEOUT_MS 8000
+#define ACQUIRE_POLL_MS    60
 
-// 连续读 N 帧目标缓存, 抖动超门限判失败, 否则输出中心/角度均值。
 static bool acquire_pose(float *out_px, float *out_py, float *out_ang)
 {
-    float cx[POSE_FRAMES], cy[POSE_FRAMES], ang[POSE_FRAMES];
-    uint32_t prev_fid = 0;
-    for (int i = 0; i < POSE_FRAMES; i++) {
+    int waited = 0;
+    while (1) {
         arm_target_t t;
-        int waited = 0;
-        // 第0帧只需有效; 后续帧必须是新检测(frame_id 变化)。每 POSE_INTERVAL_MS 轮询, 超 POSE_FRESH_TIMEOUT_MS 判失败。
-        while (1) {
-            armlink_get_last_target(&t);
-            if (t.valid && (i == 0 || t.frame_id != prev_fid)) break;
-            if (waited >= POSE_FRESH_TIMEOUT_MS) {
-                ESP_LOGW(TAG, "pose: 第%d帧等新检测超时", i);
-                return false;
-            }
-            vTaskDelay(pdMS_TO_TICKS(POSE_INTERVAL_MS));
-            waited += POSE_INTERVAL_MS;
+        armlink_get_last_target(&t);
+        if (t.valid && t.stable) {
+            *out_px = t.center_x_px; *out_py = t.center_y_px; *out_ang = t.angle_deg;
+            ESP_LOGI(TAG, "pose ok(stable) px=%.1f py=%.1f ang=%.1f", *out_px, *out_py, *out_ang);
+            return true;
         }
-        prev_fid = t.frame_id;
-        cx[i] = t.center_x_px; cy[i] = t.center_y_px; ang[i] = t.angle_deg;
+        if (waited >= ACQUIRE_TIMEOUT_MS) {
+            ESP_LOGW(TAG, "pose: 等待STABLE超时(%dms)", ACQUIRE_TIMEOUT_MS);
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(ACQUIRE_POLL_MS));
+        waited += ACQUIRE_POLL_MS;
     }
-    float minx = cx[0], maxx = cx[0], miny = cy[0], maxy = cy[0];
-    float mina = ang[0], maxa = ang[0], sx = 0, sy = 0, sa = 0;
-    for (int i = 0; i < POSE_FRAMES; i++) {
-        if (cx[i] < minx) minx = cx[i];
-        if (cx[i] > maxx) maxx = cx[i];
-        if (cy[i] < miny) miny = cy[i];
-        if (cy[i] > maxy) maxy = cy[i];
-        if (ang[i] < mina) mina = ang[i];
-        if (ang[i] > maxa) maxa = ang[i];
-        sx += cx[i]; sy += cy[i]; sa += ang[i];
-    }
-    if ((maxx - minx) > POSE_CENTER_RANGE_PX || (maxy - miny) > POSE_CENTER_RANGE_PX) {
-        ESP_LOGW(TAG, "pose: 中心抖动 %.1f,%.1f", maxx - minx, maxy - miny); return false;
-    }
-    if ((maxa - mina) > POSE_ANGLE_RANGE_DEG) {
-        ESP_LOGW(TAG, "pose: 角度抖动 %.1f", maxa - mina); return false;
-    }
-    *out_px = sx / POSE_FRAMES; *out_py = sy / POSE_FRAMES; *out_ang = sa / POSE_FRAMES;
-    ESP_LOGI(TAG, "pose ok px=%.1f py=%.1f ang=%.1f", *out_px, *out_py, *out_ang);
-    return true;
 }
 
 // 世界长轴角 -> 腕#004 PWM。抓取时腕轴需对齐电池长轴(垂直于长轴夹取)。
@@ -195,6 +171,7 @@ static void go_observe_ex(bool open_grip)
     armctrl_move_servo(4, s_cal.wrist_center_pwm, 600);                     // 腕中位
     armctrl_move_arm(0, s_cal.observe_y, s_cal.carry_z, 1200);             // 中转(正前高处)
     armctrl_move_arm(s_cal.observe_x, s_cal.observe_y, s_cal.observe_z, 1200);
+    armlink_track_resume();   // 臂已停稳在观察位: 跟踪器硬重置+记新门限时间戳(根治运动帧污染)
 }
 
 static void go_observe(void)
@@ -223,6 +200,7 @@ static void armctrl_task(void *arg)
         if (!acquire_pose(&px, &py, &ang)) {
             ESP_LOGW(TAG, "位姿不稳, 重试"); vTaskDelay(pdMS_TO_TICKS(300)); continue;
         }
+        armlink_track_suspend();   // 即将开始运动序列: 挂起跟踪器,直到下次 go_observe_ex 内部 resume
         float mm_x, mm_y;
         homography_apply(s_cal.H, px, py, &mm_x, &mm_y);
         float world_ang = homography_angle(s_cal.H, ang);
