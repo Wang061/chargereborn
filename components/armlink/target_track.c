@@ -2,8 +2,10 @@
 #include <math.h>
 
 // —— 滤波参数(像素单位；上板实测后按运行手册流程调整这里的数值，不改算法结构)——
-#define TRACK_R_POS       4.0f      // cx,cy 测量噪声方差(px²), σ≈2px 起点
-#define TRACK_R_WH        9.0f      // w,h 测量噪声方差(px²), σ≈3px 起点
+// 2026-07-07 静止实标(两次开机~250帧, AA@0.73): σ_cx=3.0 σ_cy=3.6px → R_POS=12;
+// h 对称呼吸 σ≈27px(cy 不受累)、w σ≈6px → R_WH 取 σ≈8 折中。
+#define TRACK_R_POS       12.0f     // cx,cy 测量噪声方差(px²), σ≈3.5px 实测
+#define TRACK_R_WH        64.0f     // w,h 测量噪声方差(px²), σ≈8px 实测折中
 #define TRACK_R_ANG       0.011f    // cos2θ/sin2θ 测量噪声方差(单位向量域)
 #define TRACK_LAMBDA_POS  0.06f     // 位置通道 λ=q/R(主旋钮): 稳态K≈0.22
 #define TRACK_LAMBDA_WH   0.03f     // 尺寸通道 λ 减半(更钝)
@@ -17,19 +19,20 @@
 #define TRACK_GATE_MIN_PX      20.0f    // 空间门限最小值(px)
 
 #define TRACK_MIN_HITS          3       // 连续命中数达此值才 confirmed
-#define TRACK_MAX_AGE_US   1200000LL    // 1.2s，滑行超时判 LOST(微秒)
+#define TRACK_MAX_AGE_US    800000LL    // 0.8s，滑行超时判 LOST(微秒)。0707: 1.2s→0.8s 重锁提速
 
-#define TRACK_RECAPTURE_COUNT       3       // 连续N帧门外聚集候选才判"目标被挪动"
+#define TRACK_RECAPTURE_COUNT       2       // 连续N帧门外聚集候选才判"目标被挪动"。0707: 3→2 重锁提速
 #define TRACK_RECAPTURE_CLUSTER_PX  20.0f   // 聚集判定：候选两两中心距离阈值
 
 #define TRACK_EXCLUSION_RADIUS_PX   60.0f   // 初始化排除半径(连续模式防重抓)
 
-#define TRACK_STABLE_NU_PX      3.0f    // 稳定判据: 单帧新息阈值
-#define TRACK_STABLE_SIGMA_PX   2.0f    // 稳定判据: sqrt(P) 阈值
+#define TRACK_STABLE_NU_PX      8.0f    // 稳定判据: 单帧新息阈值。0707实标: 新息真实σ≈3.9px,
+                                        // 旧值3px只覆盖~58%帧→STABLE靠运气; 8≈2σ覆盖~97%
+#define TRACK_STABLE_SIGMA_PX   2.5f    // 稳定判据: sqrt(P) 阈值(R=12下确认期P略高,2.0过卡)
 #define TRACK_STABLE_EXTENT_PX  4.0f    // 稳定判据: 滑窗中心极差阈值
 #define TRACK_STABLE_EXTENT_DEG 5.0f    // 稳定判据: 滑窗角度极差阈值
 #define TRACK_STABLE_MAX_MISS   1       // 滑窗内(5帧)允许的最大miss数
-#define TRACK_STABLE_ENTER_N    5       // 连续满足N帧才进入STABLE
+#define TRACK_STABLE_ENTER_N    3       // 连续满足N帧才进入STABLE。0707: 5→3 重锁提速
 #define TRACK_STABLE_EXIT_N     2       // 连续不满足N帧才退出STABLE
 
 #define TRACK_DT_MAX_S   2.0f     // dt钳位上限(防止长间隔后 predict 让 P 异常增大)
@@ -46,7 +49,9 @@ static float kf1_update(float *x, float *p, float z, float r) {
     return nu;
 }
 
-static void kf1_init(float *x, float *p, float z, float r) { *x = z; *p = 10.0f * r; }
+// 初值方差 3R: 首帧后 σ≈6px 级不确定度——既容纳真实抖动, 又保证第二帧起
+// 类翻转框跳(~31px, 见 test_class_flip)仍被新息门限拒收(3√(3R+R)≈21px < 31px)。
+static void kf1_init(float *x, float *p, float z, float r) { *x = z; *p = 3.0f * r; }
 
 // —— 角度双通道编解码(mod-180°回绕安全) ——
 static void angle_to_vec(float angle_deg, float *c2, float *s2) {
