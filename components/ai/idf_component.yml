@@ -3,4 +3,4 @@ dependencies:
   # (2026-06-18 板上 A/B 实测: registry 3.3.5 与本地 override 3.3.5 推理逐框分数完全一致 → 自包含安全)
   espressif/esp-dl:
     version: "==3.3.5"
-  # battery_detect(自训 18650 模型)已 vendored 为本地组件 components/battery_detect/，IDF 自动发现，不在此声明
+  # battery_detect4(自训 4 类电池模型)已 vendored 为本地组件 components/battery_detect4/，IDF 自动发现，不在此声明

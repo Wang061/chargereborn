@@ -1,12 +1,6 @@
 #include "ai.h"
 #include "battery_angle.h"
-#if CONFIG_AI_DETECTOR_BATTERY_YOLO
-#include "battery_yolo_detect.hpp"
-#elif CONFIG_AI_DETECTOR_BATTERY_DETECT4
 #include "espdet4_detect.hpp"
-#else
-#include "espdet_detect.hpp"
-#endif
 #include "dl_image_jpeg.hpp"
 #include "camera.h"
 #include "esp_log.h"
@@ -92,16 +86,8 @@ static void run_img(dl::image::img_t &img, ai_result_t *out) {
 
 extern "C" esp_err_t ai_init(void) {
     if (!s_lock) s_lock = xSemaphoreCreateMutex();
-#if CONFIG_AI_DETECTOR_BATTERY_YOLO
-    if (!s_det)  s_det  = new BatteryYoloDetect();  // lazy_load=true：首次 run 才载模型
-    ESP_LOGI(TAG, "ai_init ok (esp-dl YOLOv8n 4-class, lazy)");
-#elif CONFIG_AI_DETECTOR_BATTERY_DETECT4
     if (!s_det)  s_det  = new ESPDet4Detect();  // lazy_load=true：首次 run 才载模型
     ESP_LOGI(TAG, "ai_init ok (esp-dl ESPDet-Pico 4-class, lazy)");
-#else
-    if (!s_det)  s_det  = new ESPDetDetect();   // lazy_load=true：首次 run 才载模型
-    ESP_LOGI(TAG, "ai_init ok (esp-dl ESPDet, lazy)");
-#endif
     return (s_det && s_lock) ? ESP_OK : ESP_ERR_NO_MEM;
 }
 
@@ -134,9 +120,7 @@ extern "C" void ai_get_last(ai_result_t *out) {
 }
 
 extern "C" const char *ai_class_name(int cls) {
-#if CONFIG_AI_DETECTOR_BATTERY_YOLO || CONFIG_AI_DETECTOR_BATTERY_DETECT4
     // 4 类电池模型, 类别 id 顺序 = 训练集 data.yaml (0:21700 1:18650 2:9V 3:AA)
-    // battery_detect4 的 battery4.yaml 沿用同一顺序(NAMES 建集时对齐)
     switch (cls) {
     case 0: return "21700";
     case 1: return "18650";
@@ -144,7 +128,4 @@ extern "C" const char *ai_class_name(int cls) {
     case 3: return "AA";
     default: return "obj";
     }
-#else
-    return (cls == 0) ? "18650" : "obj";   // 单类 18650 模型(M5)
-#endif
 }
