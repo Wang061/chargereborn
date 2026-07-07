@@ -1,6 +1,6 @@
 idf_component_register(
-    SRCS "armlink.c" "armlink_uart.c" "armlink_frame.c"
+    SRCS "armctrl.c"
     INCLUDE_DIRS "include"
-    REQUIRES ai
+    REQUIRES armcal kinematics armlink
     PRIV_REQUIRES driver
 )

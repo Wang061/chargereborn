@@ -34,6 +34,19 @@ void armlink_update_from_ai(const ai_result_t *r);
 // 读取最近一次机械臂目标缓存。线程安全。供 /arm_target。
 void armlink_get_last_target(arm_target_t *out);
 
+/* —— 运行时安全开关（与编译期 CONFIG_ARMLINK_UART_ENABLE 解耦）——
+ * UART 硬件可启用，但"每帧自动发坐标驱动臂"默认关闭；联调确认链路无误后再开。
+ * 这样首次上电不会因检测到电池就连续驱动机械臂。 */
+// 设置/读取自动发送开关（默认 false=不自动驱动臂）。线程安全。供 /arm_auto。
+void armlink_set_auto_send(bool on);
+bool armlink_get_auto_send(void);
+
+// 手动发一段安全测试序列：裸腕舵机(#004) 中位 -> 小幅摆(~20°) -> 回中位（真机 COM4 直连验证过的裸协议帧）。
+// $KMS:x,y,z,t! 自解算在真机固件上未实现（sscanf 不匹配，COM4 直连实测确认），故测试帧改走裸协议。
+// 供 /arm_test 联调用：受控、点一次发一次（含 ~1.4s 延时，调用期间同步阻塞）。
+// UART 未启用时返回 ESP_ERR_INVALID_STATE。返回 ESP_OK=已发送。不做并发保护，仅供单次手动点按场景。
+esp_err_t armlink_send_test_frame(void);
+
 /* —— 协议编码（纯字符串，不发送；供 UART sink 或上位机复用）—— */
 // $KMS:x,y,z,t! —— Steward(KM1) 自做 IK 的坐标指令。
 // 注意：本步无 px->mm 标定，机械域是占位，编码值不可直接驱动真臂。

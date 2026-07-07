@@ -8,6 +8,8 @@
 #include "camera.h"
 #include "ai.h"
 #include "armlink.h"
+#include "kinematics.h"
+#include "armctrl.h"
 
 static const char *TAG = "main";
 
@@ -41,6 +43,13 @@ void app_main(void)
     bsp_print_sysinfo();
     bsp_psram_selftest();
 
+    int kst = kin_selftest();
+    if (kst != 0) {
+        ESP_LOGE(TAG, "IK 自检失败(code=%d)! 运动学数学损坏，禁止自动抓取", kst);
+    } else {
+        ESP_LOGI(TAG, "IK 自检通过");
+    }
+
     if (camera_init() != ESP_OK) {
         ESP_LOGW(TAG, "camera init failed — 图传将不可用，继续运行便于排查接线");
     }
@@ -53,6 +62,7 @@ void app_main(void)
         ESP_LOGW(TAG, "ai init failed — 推理不可用，继续运行");
     } else {
         armlink_init();   // 机械臂目标产出器（UART 默认关，不驱动真臂）
+        armctrl_init();
         xTaskCreate(detect_task, "detect", 8192, NULL, 3, NULL);
     }
 

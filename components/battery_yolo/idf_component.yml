@@ -1,0 +1,6 @@
+version: "0.1.0"
+license: "MIT"
+description: battery yolov8n 4-class detect model (21700/18650/9V/AA), teammate-trained, esp-dl 6-output export.
+dependencies:
+  espressif/esp-dl:
+    version: "==3.3.5"

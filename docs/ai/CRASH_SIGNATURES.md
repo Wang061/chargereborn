@@ -25,7 +25,21 @@
 - 标签: #wdt #freertos
 -->
 
-（暂无真实条目——首个 bug 修复后由 /learn 写入。）
+### YOLOv8n 4类模型上板 5.8s/帧 → task_wdt 每周期触发  (2026-07-04)
+- 症状: flash 后 monitor 每周期 `task_wdt: ... IDLE0 (CPU 0)` + `Tasks currently running: CPU 0: detect`，`detect: n=0 infer=5825ms`（重复回溯、CPU0 饥饿）；WiFi AP station drop（reason=8）；板子进降级循环但不复位。日志 `logs/monitor/20260704_155154.log`。
+- 根因: 队友模型是**全尺寸 YOLOv8n backbone**（3.0M 参数 / 8.1 GFLOPs），非 MCU 特化架构。ESP32-S3@160MHz int8 实测 5.8s/帧，vs ESPDet-Pico（354K 参数，为该 MCU 设计）219ms —— 26x。1→4 类不需要 8.5x 参数量，是 backbone 选型错误；量化调参/包装代码**无法修复架构级超载**（导出侧 6 分离输出、letterbox 校准这次都做对了，照样 5.8s）。
+- 修法: 回退 `CONFIG_AI_DETECTOR_ESPDET`（sdkconfig 实际值 + `components/ai/Kconfig` 默认值双双回 espdet），16:24 重烧、16:26 monitor 确认 219ms 稳定。battery_yolo 组件留档禁用（Kconfig help 已标注勿选）。4 类能力改由 **ESPDet-Pico 架构重训**接棒（分支 feat/battery-espdet4，数据复用队友 4 类标注集）。
+- 预防: 任何新模型上板前先做**算力预算**：参数量/GFLOPs 对照已验证基线线性外推（354K@219ms → 3.0M ≈ 3.6s 起步，必炸 5s TWDT）；先板上单帧 benchmark，再接进 detect 循环；MCU 部署只选 MCU 特化架构（ESPDet/PicoDet 系），通用 YOLO 系一律先过预算关。跨人协作交付模型时把"目标板算力预算"写进需求，而不只是类别数和 mAP。
+- 标签: #wdt #model #sizing #espdet #yolo
+
+---
+
+### 机械臂测试帧不动 —— 真机 KM1 固件 $KMS: 自解算未实现  (2026-07-02)
+- 症状: 点"机械臂测试帧"按钮，Brain 经 UART1 发出 `$KMS:0,120,80,1000!`（日志确认已发出、KM1 侧确认已收到），但机械臂完全不动；此前 OpenMV 版本能正常驱动。
+- 根因: COM4 直连 KM1（绕开 Brain/WiFi，走同一 `serialEvent()`→`uart_data_parse()`→`parse_cmd` 解析链）三帧对照实测：`$KMS:...!` 只回显输入、之后无任何响应（`$KMS:` 分支内 `sscanf` 未匹配任何字段）；`$DST:0!`（内部重路由到 `#000PDST!`）与裸协议 `{#004P1500T1000!}` 均正常回显并派发。链路其余环节（Brain 发送、KM1 接收、`parse_cmd`、`parse_action` 舵机派发）全部正常——真机固件里就没有可用的 `$KMS:` 运动学自解算实现（对应源码分支系后加，未烧进当前真机）。
+- 修法: 测试帧改发已验证可动的裸协议序列：腕舵机(#004) 中位→摆动(~20°)→回中位，3 帧 `{#004Pxxxx T0600!}`，不再依赖 `$KMS:`。`components/armlink/armlink.c` 新增 `armlink_send_wrist_pwm()` 小工具 + 重写 `armlink_send_test_frame()`；`armlink.h` 同步更新函数注释。已 build+flash+串口日志+用户物理确认（腕舵机可见摆动）通过。
+- 预防: "帧已发送但设备无响应"类问题，怀疑接收端解析层时，优先用独立直连（本例 COM4 直连 KM1 USB 口，绕开中间链路）对同一条命令做多帧交叉对照（可疑命令 vs 已知能通的替代命令 vs 最底层裸协议），只信物理实测回显；不要假设源码里存在某分支就等于它在真机固件里已编译生效。真机 IK 常量供 Phase 2 参考：`setup_kinematics(100,105,75,180,&kinematics)` → L0=100,L1=105,L2=75,L3=180mm。
+- 标签: #uart #armlink #km1 #protocol #root-cause
 
 ---
 

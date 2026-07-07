@@ -4,6 +4,12 @@
 
 ---
 
+## 2026-07-04 · 4类检测器改走 ESPDet-Pico 重训（否决 YOLOv8n 上板）
+- **决策**：队友 YOLOv8n 4类模型上板否决（实测 5.8s/帧，每周期炸 5s TWDT，见 CRASH_SIGNATURES 2026-07-04）；4 类能力由 **ESPDet-Pico(354K) nc=4 重训**接棒。视觉模型线独立分支 `feat/battery-espdet4`，与 phase2-ik-autograsp（G1-G4 硬件线）解耦并行。
+- **理由**：ESPDet-Pico 是 MCU 特化架构（板上已验证 219ms/帧）；多类支持后处理器原生具备（`ESPDetPostProcessor::parse_stage` 有类别循环，nc=4 固件侧零改动）；训练三处关键修复（esp_head/batch/letterbox calib）已在 `D:\WJ\jixiebi\ai\esp-detection` 在位；数据复用队友 4 类标注集副本（`D:\WJ\jixiebi\ai\vm.jpg`，394图/373标注）。
+- **验收**：float mAP50 ≥ 0.85（4类均衡看，18650 类单独看——抓取主角）；板上单帧 ≤ ~300ms、4类均可出框；上板 A/B 后由用户拍板是否替换 demo 主模型。
+- **影响**：新组件 `components/battery_detect4`（battery_yolo 留档禁用勿删）；`components/ai` Kconfig 三选一；partitions.csv 8MB factory 沿用（本轮模型 ~500KB，余量巨大）。落败兜底 = 单类 ESPDet demo + 报告叙述 4 类工作。
+
 ## 2026-06-03 · 确定开发板 = ESP32-S3-WROOM-1-N16R8
 - **决策**：填 BOARD.md；`sdkconfig.defaults.esp32s3` 设 `FLASHSIZE_16MB` + `SPIRAM`(Octal/OPI, 80M)。
 - **依据**：16MB Quad(QIO) Flash + 8MB Octal PSRAM(VDD **3.3V**)；双 Type-C 含**原生 USB-Serial-JTAG**(GPIO19/20)→ 板载 JTAG 零外接可用。
@@ -44,3 +50,8 @@
 - **决策**：锁定 ESP-IDF 5.5.4 + target esp32s3，不自动升级。
 - **理由**：用户指定 5.5.4；稳定线，避免 6.x 迁移噪声。
 - **影响**：见 `.claude/rules/version-lock.md`。
+
+## 2026-07-04 · factory 分区 4MB→8MB（partitions.csv）
+- **决策**：factory app 分区扩到 0x800000；espdet_det/coredump 顺移（0x810000/0xB10000），NVS 不动。
+- **理由**：队友交付 YOLOv8n 4类电池模型 espdl 3.05MB，rodata 内嵌后 app 必超 4MB；8MB 允许新旧双模型共存做板上 A/B。16MB flash 总占 ~11.1MB，余量充足。
+- **风险与验证**：改分区表 = 全片重烧（含分区表+app），boot check 必做；无 OTA 在用，coredump 保留，NVS offset 未变旧数据兼容。

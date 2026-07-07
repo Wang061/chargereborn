@@ -1,6 +1,10 @@
 #include "ai.h"
 #include "battery_angle.h"
+#if CONFIG_AI_DETECTOR_BATTERY_YOLO
+#include "battery_yolo_detect.hpp"
+#else
 #include "espdet_detect.hpp"
+#endif
 #include "dl_image_jpeg.hpp"
 #include "camera.h"
 #include "esp_log.h"
@@ -12,7 +16,7 @@
 
 static const char *TAG = "ai";
 
-static ESPDetDetect    *s_det  = nullptr;
+static dl::detect::Detect *s_det  = nullptr;
 static SemaphoreHandle_t s_lock = nullptr;
 static ai_result_t       s_last = {};   // 最近一次检测结果缓存（供 /detect 读，避免相机多消费者竞争）
 
@@ -40,8 +44,13 @@ static void run_img(dl::image::img_t &img, ai_result_t *out) {
 
 extern "C" esp_err_t ai_init(void) {
     if (!s_lock) s_lock = xSemaphoreCreateMutex();
+#if CONFIG_AI_DETECTOR_BATTERY_YOLO
+    if (!s_det)  s_det  = new BatteryYoloDetect();  // lazy_load=true：首次 run 才载模型
+    ESP_LOGI(TAG, "ai_init ok (esp-dl YOLOv8n 4-class, lazy)");
+#else
     if (!s_det)  s_det  = new ESPDetDetect();   // lazy_load=true：首次 run 才载模型
     ESP_LOGI(TAG, "ai_init ok (esp-dl ESPDet, lazy)");
+#endif
     return (s_det && s_lock) ? ESP_OK : ESP_ERR_NO_MEM;
 }
 
@@ -74,5 +83,16 @@ extern "C" void ai_get_last(ai_result_t *out) {
 }
 
 extern "C" const char *ai_class_name(int cls) {
-    return (cls == 0) ? "18650" : "obj";   // 单类 18650 模型(M5);多类在此扩表
+#if CONFIG_AI_DETECTOR_BATTERY_YOLO
+    // 4 类电池模型, 类别 id 顺序 = 训练集 data.yaml (0:21700 1:18650 2:9V 3:AA)
+    switch (cls) {
+    case 0: return "21700";
+    case 1: return "18650";
+    case 2: return "9V";
+    case 3: return "AA";
+    default: return "obj";
+    }
+#else
+    return (cls == 0) ? "18650" : "obj";   // 单类 18650 模型(M5)
+#endif
 }

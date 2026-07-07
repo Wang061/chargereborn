@@ -1,0 +1,18 @@
+menu "AI detector"
+    choice AI_DETECTOR
+        prompt "detector model"
+        default AI_DETECTOR_ESPDET
+        help
+            Which on-board detector components/ai instantiates.
+            espdet: M5 自训 ESPDet-Pico 单类 18650(默认, 板上已验证 219ms)。
+            battery_yolo: 队友 YOLOv8n 4 类(21700/18650/9V/AA)。板上实测 5.8s/帧,
+            每周期触发 5s task_wdt —— 架构级超载, 已否决, 仅留档勿选(见 CRASH_SIGNATURES 2026-07-04)。
+            4 类能力由 ESPDet-Pico 重训接棒(feat/battery-espdet4)。
+
+        config AI_DETECTOR_BATTERY_YOLO
+            bool "battery_yolo (YOLOv8n 4-class)"
+
+        config AI_DETECTOR_ESPDET
+            bool "espdet (ESPDet-Pico single-class 18650)"
+    endchoice
+endmenu
