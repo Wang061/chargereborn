@@ -192,12 +192,16 @@ static bool acquire_pose(float *out_px, float *out_py, float *out_ang)
     }
 }
 
-// 当前演示只抓 AA: 腕#004 固定横夹,不跟随电池长轴角。
-// world_ang_deg 仍保留在调用链里,方便后续恢复角度自适应抓取。
+// 世界长轴角 -> 腕#004 PWM。抓取时腕轴对齐电池长轴,不使用目标左右偏移来算腕角。
+// 注: spec §4.4 的"减去抓取点方位角(底座旋转)"耦合在此折进经验 wrist_zero_deg -
+// 与 OpenMV 参考(get_grip_angle_deg 用经验偏移,不显式减方位角)一致,G1 标定 wrist_zero_deg 时一并吸收。
 static int wrist_pwm_for_angle(float world_ang_deg)
 {
-    (void)world_ang_deg;
-    return armlink_clamp_pwm(s_cal.wrist_center_pwm);
+    float a = world_ang_deg + s_cal.wrist_zero_deg;
+    while (a >= 90.0f) a -= 180.0f;
+    while (a < -90.0f) a += 180.0f;
+    int pwm = s_cal.wrist_center_pwm + (int)(a * s_cal.wrist_k);
+    return armlink_clamp_pwm(pwm);
 }
 
 // 抓取序列: 正上方悬停(可急停) -> 预降 -> 腕对齐 -> 最终下降 -> 夹 -> 抬到carry。
@@ -210,7 +214,7 @@ static esp_err_t pick_sequence(float mm_x, float mm_y, float world_ang)
 
     // 1. 目标正上方安全高度悬停(此处人可经 /arm_estop 或断电随时急停)
     if (armctrl_move_arm(mm_x, mm_y, s_cal.approach_z, 1500) != ESP_OK) return ESP_FAIL;
-    // 2. 腕固定横夹
+    // 2. 腕对齐电池长轴
     armctrl_move_servo(4, wrist_pwm_for_angle(world_ang), 800);
     // 3. 预降
     if (armctrl_move_arm(mm_x, mm_y, pre_z, 1200) != ESP_OK) return ESP_FAIL;
