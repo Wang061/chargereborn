@@ -84,11 +84,118 @@ static void test_bottom_false_positive_rejected(void) {
     CHECK(fabsf(out.cy - 182.0f) < 5.0f, "persistent low-score false positive must not hijack the track");
 }
 
+// ---- 测试5: 稳态收敛(有界噪声下必须收敛且尾段抖动收紧) ----
+static float pseudo_noise(uint32_t *seed) {
+    *seed = (*seed) * 1103515245u + 12345u;
+    float u = (float)((*seed >> 8) & 0xFFFF) / 65536.0f;   // 0..1 近似均匀
+    return (u - 0.5f) * 2.0f;   // -1..1
+}
+static void test_steady_state_convergence(void) {
+    track_state_t tr;
+    track_init(&tr);
+    track_resume(&tr, 0);
+    uint32_t seed = 42;
+    int64_t ts = 0;
+    int stable_frame = -1;
+    float tail_cx[10];
+    for (int i = 0; i < 40; i++) {
+        float noise_x = pseudo_noise(&seed) * 3.0f;   // 量级~1.7px std,够用的冒烟噪声
+        float noise_y = pseudo_noise(&seed) * 3.0f;
+        track_box_t b = { .cx = 330.0f + noise_x, .cy = 182.0f + noise_y, .w=165, .h=60, .angle_deg=-1, .score=0.73f, .anisotropy=0 };
+        ts += 250000;
+        track_update(&tr, &b, 1, ts);
+        track_output_t out; track_get(&tr, &out);
+        if (stable_frame < 0 && out.stable) stable_frame = i;
+        if (i >= 30) tail_cx[i - 30] = out.cx;
+    }
+    CHECK(stable_frame >= 0, "STABLE must eventually be reached under bounded noise");
+    float minv = tail_cx[0], maxv = tail_cx[0];
+    for (int i = 1; i < 10; i++) { if (tail_cx[i] < minv) minv = tail_cx[i]; if (tail_cx[i] > maxv) maxv = tail_cx[i]; }
+    CHECK((maxv - minv) <= 3.0f, "steady-state filtered center must be tight (<=3px range over last 10 frames)");
+}
+
+// ---- 测试6: 滑行->丢锁->重捕获; 目标挪动100px->聚集重锁 ----
+static void test_coast_lost_recapture(void) {
+    track_state_t tr;
+    track_init(&tr);
+    track_resume(&tr, 0);
+    int64_t ts = 0;
+    for (int i = 0; i < 5; i++) {
+        track_box_t b = { .cx=330, .cy=182, .w=165, .h=60, .angle_deg=-1, .score=0.73f, .anisotropy=0 };
+        ts += 250000;
+        track_update(&tr, &b, 1, ts);
+    }
+    track_output_t out; track_get(&tr, &out);
+    CHECK(out.confirmed, "must be confirmed before coast test");
+
+    // 丢检 1.5s(超过 max_age=1.2s) -> LOST
+    ts += 1500000;
+    bool accepted = track_update(&tr, NULL, 0, ts);
+    CHECK(accepted, "empty-detection frame is still a valid update call(not gated)");
+    track_get(&tr, &out);
+    CHECK(!out.confirmed, "must go LOST after max_age with no detections");
+
+    // 重捕获: 下一帧出现目标,应重新从 hits=1 起步(尚不confirmed)
+    ts += 250000;
+    track_box_t b2 = { .cx=330, .cy=182, .w=165, .h=60, .angle_deg=-1, .score=0.73f, .anisotropy=0 };
+    track_update(&tr, &b2, 1, ts);
+    track_get(&tr, &out);
+    CHECK(!out.confirmed, "single hit right after LOST must not be confirmed yet(min_hits=3)");
+
+    // ---- 目标挪动100px: 连续3帧聚集拒绝后应重置,随后在新位置重新确认 ----
+    track_state_t tr2;
+    track_init(&tr2);
+    track_resume(&tr2, 0);
+    ts = 0;
+    for (int i = 0; i < 5; i++) {
+        track_box_t b = { .cx=330, .cy=182, .w=165, .h=60, .angle_deg=-1, .score=0.73f, .anisotropy=0 };
+        ts += 250000;
+        track_update(&tr2, &b, 1, ts);
+    }
+    track_get(&tr2, &out);
+    CHECK(out.confirmed, "must be confirmed before move test");
+    for (int i = 0; i < 3; i++) {
+        track_box_t moved = { .cx=430, .cy=182, .w=165, .h=60, .angle_deg=-1, .score=0.73f, .anisotropy=0 };
+        ts += 250000;
+        track_update(&tr2, &moved, 1, ts);
+    }
+    track_get(&tr2, &out);
+    CHECK(!out.confirmed, "after 3 clustered off-gate rejections the stale track must reset");
+    for (int i = 0; i < 3; i++) {
+        track_box_t moved = { .cx=430, .cy=182, .w=165, .h=60, .angle_deg=-1, .score=0.73f, .anisotropy=0 };
+        ts += 250000;
+        track_update(&tr2, &moved, 1, ts);
+    }
+    track_get(&tr2, &out);
+    CHECK(out.confirmed, "tracker must recapture at the new location after reset");
+    CHECK(fabsf(out.cx - 430.0f) < 5.0f, "recaptured center must match the moved location");
+}
+
+// ---- 测试7: 角度回绕(178<->2度交替噪声,滤波不得穿越90度假跳变) ----
+static void test_angle_wraparound(void) {
+    track_state_t tr;
+    track_init(&tr);
+    track_resume(&tr, 0);
+    int64_t ts = 0;
+    float angs[] = {178.0f, 2.0f, 179.0f, 1.0f, 178.5f, 1.5f};
+    for (int i = 0; i < 6; i++) {
+        track_box_t b = { .cx=330, .cy=182, .w=165, .h=60, .angle_deg=angs[i], .score=0.73f, .anisotropy=0.5f };
+        ts += 250000;
+        track_update(&tr, &b, 1, ts);
+        track_output_t out; track_get(&tr, &out);
+        CHECK(out.angle_deg < 30.0f || out.angle_deg > 150.0f,
+              "filtered angle must stay near the true value's short-arc side, not drift to ~90");
+    }
+}
+
 int main(void) {
     test_motion_frame_rejected();
     test_class_flip_no_jump();
     test_score_flicker_no_break();
     test_bottom_false_positive_rejected();
+    test_steady_state_convergence();
+    test_coast_lost_recapture();
+    test_angle_wraparound();
     printf(fails ? "\n%d FAILED\n" : "\nALL PASS\n", fails);
     return fails ? 1 : 0;
 }
