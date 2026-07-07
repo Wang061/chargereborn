@@ -27,6 +27,7 @@ static volatile bool s_continuous = false;
 static float s_processed_px[8][2];   // 连续模式防重抓: 本次运行会话已处理目标的px中心
 static int   s_processed_count = 0;
 static int   s_acquire_fail_streak = 0;
+static volatile bool s_holding = false;  // 爪中疑似有物(pick成功置位,place尝试完成清零);急停/切割失败恢复后的run入口据此决定不开爪
 
 // —— dashboard 统计: 独立 NVS 命名空间"stats",与 armcal 完全隔离,不影响标定数据 ——
 #define STATS_NS  "stats"
@@ -159,6 +160,7 @@ void armctrl_move_servo(int idx, int pwm, int move_ms)
 }
 
 // 等待 armlink 内建跟踪器(target_track)进入 STABLE(见 armlink/target_track.h),超时判失败。
+// 滑行帧(coasting)不作为下爪依据——同时满足 spec §4.6 STABLE 判据的"当前帧必须命中"。
 // 旧的"5帧中心/角度抖动窗口"逻辑已整体退役——抖动判定、时间门限、丢检滑行现全部
 // 在 target_track 内部完成(见 docs/superpowers/specs/2026-07-06-final-submission-cleanup-design.md §4.6)。
 #define ACQUIRE_TIMEOUT_MS 8000
@@ -168,9 +170,13 @@ static bool acquire_pose(float *out_px, float *out_py, float *out_ang)
 {
     int waited = 0;
     while (1) {
+        if (!s_run || s_estop) {
+            ESP_LOGW(TAG, "pose: 运行已取消/急停, 中止等待");
+            return false;
+        }
         arm_target_t t;
         armlink_get_last_target(&t);
-        if (t.valid && t.stable) {
+        if (t.valid && t.stable && !t.coasting) {
             *out_px = t.center_x_px; *out_py = t.center_y_px; *out_ang = t.angle_deg;
             ESP_LOGI(TAG, "pose ok(stable) px=%.1f py=%.1f ang=%.1f", *out_px, *out_py, *out_ang);
             return true;
@@ -288,7 +294,7 @@ static void armctrl_task(void *arg)
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
         }
-        go_observe();
+        go_observe_ex(!s_holding);   // 爪中疑似有物(急停恢复/切割失败重启)则不开爪回观察位,等人工取出
         float px, py, ang;
         if (!acquire_pose(&px, &py, &ang)) {
             ESP_LOGW(TAG, "位姿不稳, 重试");
@@ -313,6 +319,7 @@ static void armctrl_task(void *arg)
             go_observe(); s_run = false; continue;
         }
         int64_t t_picked = esp_timer_get_time();
+        s_holding = true;   // 爪已闭合夹住电池(直到place尝试完成)
         // 切割: 抓起 -> 移刀口切割 -> 放回 -> 回观察位(G分级已去除,始终走完整含切流程)
         if (cut_sequence() != ESP_OK) {
             ESP_LOGW(TAG, "切割失败, 保持夹持撤离刀口回观察位(等人工取回)");
@@ -326,6 +333,7 @@ static void armctrl_task(void *arg)
         if (place_back(mm_x, mm_y) != ESP_OK) {
             ESP_LOGW(TAG, "放回失败");
         }
+        s_holding = false;   // place尝试已完成(正常流已过开爪点);若place期间被急停中断,以SAFETY.md急停恢复流程为准(先断电人工取出)
         int64_t t_placed = esp_timer_get_time();
         emit_cycle_log(t_identified, t_picked, t_cut, t_placed, true);
         // 记录本次目标 px 中心到防重抓排除表(px域: 放回原位后,同一观察位下一轮会在同一像素
