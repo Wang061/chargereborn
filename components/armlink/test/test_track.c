@@ -188,6 +188,74 @@ static void test_angle_wraparound(void) {
     }
 }
 
+// ---- 测试8: 双阈值(0.25/0.40)边界值——分数介于两阈值之间时,是否真的按confirmed状态分流 ----
+static void test_dual_threshold_boundary(void) {
+    // Part A: 已confirmed轨迹,分数0.30(>=UPDATE门限0.25)必须算命中
+    track_state_t tr;
+    track_init(&tr);
+    track_resume(&tr, 0);
+    int64_t ts = 0;
+    for (int i = 0; i < 3; i++) {
+        track_box_t b = { .cx=330, .cy=182, .w=165, .h=60, .angle_deg=-1, .score=0.73f, .anisotropy=0 };
+        ts += 250000;
+        track_update(&tr, &b, 1, ts);
+    }
+    track_output_t out; track_get(&tr, &out);
+    CHECK(out.confirmed && out.hits == 3, "must be confirmed with hits=3 before boundary probe");
+
+    track_box_t mid = { .cx=330, .cy=182, .w=165, .h=60, .angle_deg=-1, .score=0.30f, .anisotropy=0 };  // 0.25<=0.30<0.40
+    ts += 250000;
+    track_update(&tr, &mid, 1, ts);
+    track_get(&tr, &out);
+    CHECK(out.hits == 4, "score=0.30 must count as a hit once confirmed(>=UPDATE threshold 0.25) — proves UPDATE threshold, not NEW threshold, governs post-confirm frames");
+
+    // Part B: 尚未confirmed轨迹,分数0.30(<NEW门限0.40)必须被拒绝,不得计入hits/confirmed
+    track_state_t tr2;
+    track_init(&tr2);
+    track_resume(&tr2, 0);
+    ts = 0;
+    for (int i = 0; i < 2; i++) {
+        track_box_t b = { .cx=330, .cy=182, .w=165, .h=60, .angle_deg=-1, .score=0.73f, .anisotropy=0 };
+        ts += 250000;
+        track_update(&tr2, &b, 1, ts);
+    }
+    track_get(&tr2, &out);
+    CHECK(!out.confirmed && out.hits == 2, "must have hits=2, not yet confirmed(min_hits=3), before boundary probe");
+
+    track_box_t mid2 = { .cx=330, .cy=182, .w=165, .h=60, .angle_deg=-1, .score=0.30f, .anisotropy=0 };  // 0.25<=0.30<0.40
+    ts += 250000;
+    track_update(&tr2, &mid2, 1, ts);
+    track_get(&tr2, &out);
+    CHECK(!out.confirmed && out.hits == 2, "score=0.30 must be rejected before confirm(<NEW threshold 0.40) — hits must stay at 2, proving NEW threshold(not UPDATE) governs pre-confirm frames");
+}
+
+// ---- 测试9: 关联时"先门限后选分数",而非"先选分数后门限"——高分但门外的候选不得被选中 ----
+static void test_gate_before_score_pick(void) {
+    track_state_t tr;
+    track_init(&tr);
+    track_resume(&tr, 0);
+    int64_t ts = 0;
+    for (int i = 0; i < 3; i++) {
+        track_box_t b = { .cx=330, .cy=182, .w=165, .h=60, .angle_deg=-1, .score=0.73f, .anisotropy=0 };
+        ts += 250000;
+        track_update(&tr, &b, 1, ts);
+    }
+    track_output_t out; track_get(&tr, &out);
+    CHECK(out.confirmed, "must be confirmed before gate-order probe");
+
+    // 同帧两个候选: 门内低分(332,182,score=0.50) vs 门外高分(500,182,score=0.90,远超门限半径~50px)
+    track_box_t boxes[2];
+    boxes[0] = (track_box_t){ .cx=332, .cy=182, .w=165, .h=60, .angle_deg=-1, .score=0.50f, .anisotropy=0 };
+    boxes[1] = (track_box_t){ .cx=500, .cy=182, .w=165, .h=60, .angle_deg=-1, .score=0.90f, .anisotropy=0 };
+    ts += 250000;
+    track_update(&tr, boxes, 2, ts);
+    track_get(&tr, &out);
+
+    CHECK(!out.coasting, "in-gate candidate must be selected, not treated as a miss");
+    CHECK(fabsf(out.cx - 500.0f) > 50.0f, "must NOT jump toward the out-of-gate higher-score candidate(500,182)");
+    CHECK(fabsf(out.cx - 330.5f) < 5.0f, "must update toward the in-gate lower-score candidate(332,182), not the out-of-gate one");
+}
+
 int main(void) {
     test_motion_frame_rejected();
     test_class_flip_no_jump();
@@ -196,6 +264,8 @@ int main(void) {
     test_steady_state_convergence();
     test_coast_lost_recapture();
     test_angle_wraparound();
+    test_dual_threshold_boundary();
+    test_gate_before_score_pick();
     printf(fails ? "\n%d FAILED\n" : "\nALL PASS\n", fails);
     return fails ? 1 : 0;
 }
