@@ -202,6 +202,24 @@ static esp_err_t arm_run_get(httpd_req_t *req)
     return httpd_resp_send(req, buf, n);
 }
 
+// 急停: /arm_estop?on=1 立即停止并锁存; ?on=0 清除锁存(之后才能再次 run)。
+static esp_err_t arm_estop_get(httpd_req_t *req)
+{
+    size_t qlen = httpd_req_get_url_query_len(req) + 1;
+    if (qlen > 1 && qlen < 32) {
+        char q[32], val[4];
+        if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK &&
+            httpd_query_key_value(q, "on", val, sizeof(val)) == ESP_OK) {
+            if (val[0] == '1') armctrl_estop();
+            else armctrl_clear_estop();
+        }
+    }
+    char buf[48];
+    int n = snprintf(buf, sizeof(buf), "{\"estopped\":%s}", armctrl_is_estopped() ? "true" : "false");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, n);
+}
+
 static esp_err_t capture_get(httpd_req_t *req)
 {
     // 解析 ?name=<类名>，只保留 [0-9A-Za-z_-]，缺省 "cap"
@@ -270,5 +288,7 @@ void net_http_start(void)
     httpd_register_uri_handler(server, &calib_p);
     httpd_uri_t run = { .uri = "/arm_run", .method = HTTP_GET, .handler = arm_run_get };
     httpd_register_uri_handler(server, &run);
+    httpd_uri_t estop = { .uri = "/arm_estop", .method = HTTP_GET, .handler = arm_estop_get };
+    httpd_register_uri_handler(server, &estop);
     ESP_LOGI(TAG, "http server up -> http://192.168.4.1/");
 }

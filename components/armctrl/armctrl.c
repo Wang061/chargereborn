@@ -16,16 +16,40 @@ static armcal_t s_cal;
 static volatile bool s_run = false;     // 抓取循环开关, 默认关
 static bool s_ik_ok = false;
 static volatile bool s_cal_dirty = false;   // /arm_calib POST 后置位, armctrl 空闲时重载标定(免重启)
+static volatile bool s_estop = false;   // 急停锁存; 置位后拒绝任何新 run,且原语层直接短路不发字节
 
 #define SETTLE_MS 200   // 步间稳定余量(ms), >= 保证舵机到位
 
-void armctrl_request_run(bool on) { s_run = on; ESP_LOGW(TAG, "run=%d", on); }
+void armctrl_request_run(bool on) {
+    if (on && s_estop) { ESP_LOGW(TAG, "run 被拒: 急停锁存中,先 /arm_estop?on=0 清除"); return; }
+    s_run = on;
+    ESP_LOGW(TAG, "run=%d", on);
+}
+
+void armctrl_estop(void)
+{
+    s_estop = true;
+    s_run = false;
+#if CONFIG_ARMLINK_UART_ENABLE
+    armlink_uart_send("$DST:0!", 7);
+#endif
+    ESP_LOGW(TAG, "急停! 已发送 $DST:0! 并停止循环");
+}
+
+bool armctrl_is_estopped(void) { return s_estop; }
+
+void armctrl_clear_estop(void)
+{
+    s_estop = false;
+    ESP_LOGW(TAG, "急停已清除");
+}
 bool armctrl_is_running(void) { return s_run; }
 void armctrl_reload_cal(void) { s_cal_dirty = true; }   // 请求空闲时重载 NVS 标定(见 armctrl_task 空闲分支)
 
 esp_err_t armctrl_move_arm(float x, float y, float z, int move_ms)
 {
 #if CONFIG_ARMLINK_UART_ENABLE
+    if (s_estop) { ESP_LOGW(TAG, "[estop] 忽略 move_arm"); return ESP_ERR_INVALID_STATE; }
     int pwm[4];
     if (kin_move_best(s_cal.link_mm, x, y, z, pwm) != 0) {
         ESP_LOGE(TAG, "不可达 (%.0f,%.0f,%.0f) — 安全停", x, y, z);
@@ -52,6 +76,7 @@ esp_err_t armctrl_move_arm(float x, float y, float z, int move_ms)
 void armctrl_move_servo(int idx, int pwm, int move_ms)
 {
 #if CONFIG_ARMLINK_UART_ENABLE
+    if (s_estop) { ESP_LOGW(TAG, "[estop] 忽略 move_servo"); return; }
     char frame[32];
     int len = armlink_encode_servo_frame(idx, pwm, move_ms, frame, sizeof(frame));
     if (len > 0) {
@@ -184,7 +209,7 @@ static void armctrl_task(void *arg)
 {
     (void)arg;
     while (1) {
-        if (!s_run || !s_ik_ok || !s_cal.valid) {
+        if (!s_run || !s_ik_ok || !s_cal.valid || s_estop) {
             if (s_cal_dirty) {
                 s_cal_dirty = false;
                 armcal_load(&s_cal);
@@ -192,6 +217,7 @@ static void armctrl_task(void *arg)
             }
             if (s_run && !s_ik_ok) { ESP_LOGW(TAG, "run 被拒: IK 自检未过"); s_run = false; }
             else if (s_run && !s_cal.valid) { ESP_LOGW(TAG, "run 被拒: 未标定"); s_run = false; }
+            else if (s_run && s_estop) { ESP_LOGW(TAG, "run 被拒: 急停锁存中"); s_run = false; }
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
         }
