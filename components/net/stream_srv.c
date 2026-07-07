@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include "esp_log.h"
 #include "esp_http_server.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static const char *TAG = "stream_srv";
 
@@ -11,6 +13,8 @@ static const char *TAG = "stream_srv";
 static const char *STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
 static const char *STREAM_BOUNDARY     = "\r\n--" PART_BOUNDARY "\r\n";
 static const char *STREAM_PART         = "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
+#define STREAM_FRAME_INTERVAL_MS 120
+#define STREAM_MAX_MISSES 20
 
 static esp_err_t stream_get(httpd_req_t *req)
 {
@@ -19,9 +23,18 @@ static esp_err_t stream_get(httpd_req_t *req)
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 
     char part[64];
+    int miss_count = 0;
     while (true) {
         camera_fb_t *fb = camera_capture();
-        if (!fb) { res = ESP_FAIL; break; }
+        if (!fb) {
+            if (++miss_count >= STREAM_MAX_MISSES) {
+                res = ESP_FAIL;
+                break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(STREAM_FRAME_INTERVAL_MS));
+            continue;
+        }
+        miss_count = 0;
 
         res = httpd_resp_send_chunk(req, STREAM_BOUNDARY, strlen(STREAM_BOUNDARY));
         if (res == ESP_OK) {
@@ -34,6 +47,7 @@ static esp_err_t stream_get(httpd_req_t *req)
         }
         camera_return(fb);     // 与 camera_capture 配对
         if (res != ESP_OK) break;   // 客户端断开 → 退出循环
+        vTaskDelay(pdMS_TO_TICKS(STREAM_FRAME_INTERVAL_MS));
     }
     ESP_LOGI(TAG, "stream client closed");
     return res;

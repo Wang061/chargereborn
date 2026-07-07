@@ -183,6 +183,8 @@ static bool acquire_pose(float *out_px, float *out_py, float *out_ang)
         }
         if (waited >= ACQUIRE_TIMEOUT_MS) {
             ESP_LOGW(TAG, "pose: 等待STABLE超时(%dms)", ACQUIRE_TIMEOUT_MS);
+            ESP_LOGW(TAG, "pose timeout state: seen=%d valid=%d stable=%d coasting=%d frame=%" PRIu32,
+                     t.seen, t.valid, t.stable, t.coasting, t.frame_id);
             return false;
         }
         vTaskDelay(pdMS_TO_TICKS(ACQUIRE_POLL_MS));
@@ -190,17 +192,12 @@ static bool acquire_pose(float *out_px, float *out_py, float *out_ang)
     }
 }
 
-// 世界长轴角 -> 腕#004 PWM。抓取时腕轴需对齐电池长轴(垂直于长轴夹取)。
-// 注: spec §4.4 的"减去抓取点方位角(底座旋转)"耦合在此折进经验 wrist_zero_deg —
-// 与 OpenMV 参考(get_grip_angle_deg 用经验偏移,不显式减方位角)一致,G1 标定 wrist_zero_deg 时一并吸收。
+// 当前演示只抓 AA: 腕#004 固定横夹,不跟随电池长轴角。
+// world_ang_deg 仍保留在调用链里,方便后续恢复角度自适应抓取。
 static int wrist_pwm_for_angle(float world_ang_deg)
 {
-    // 归一化到 [-90,90]
-    float a = world_ang_deg + s_cal.wrist_zero_deg;
-    while (a >= 90.0f) a -= 180.0f;
-    while (a < -90.0f) a += 180.0f;
-    int pwm = s_cal.wrist_center_pwm + (int)(a * s_cal.wrist_k);
-    return armlink_clamp_pwm(pwm);
+    (void)world_ang_deg;
+    return armlink_clamp_pwm(s_cal.wrist_center_pwm);
 }
 
 // 抓取序列: 正上方悬停(可急停) -> 预降 -> 腕对齐 -> 最终下降 -> 夹 -> 抬到carry。
@@ -213,7 +210,7 @@ static esp_err_t pick_sequence(float mm_x, float mm_y, float world_ang)
 
     // 1. 目标正上方安全高度悬停(此处人可经 /arm_estop 或断电随时急停)
     if (armctrl_move_arm(mm_x, mm_y, s_cal.approach_z, 1500) != ESP_OK) return ESP_FAIL;
-    // 2. 腕对齐长轴
+    // 2. 腕固定横夹
     armctrl_move_servo(4, wrist_pwm_for_angle(world_ang), 800);
     // 3. 预降
     if (armctrl_move_arm(mm_x, mm_y, pre_z, 1200) != ESP_OK) return ESP_FAIL;
@@ -281,8 +278,10 @@ static void go_observe(void)
 static void armctrl_task(void *arg)
 {
     (void)arg;
+    bool need_observe = true;
     while (1) {
         if (!s_run || !s_ik_ok || !s_cal.valid || s_estop) {
+            need_observe = true;
             if (s_cal_dirty) {
                 s_cal_dirty = false;
                 armcal_load(&s_cal);
@@ -294,7 +293,10 @@ static void armctrl_task(void *arg)
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
         }
-        go_observe_ex(!s_holding);   // 爪中疑似有物(急停恢复/切割失败重启)则不开爪回观察位,等人工取出
+        if (need_observe) {
+            go_observe_ex(!s_holding);   // 爪中疑似有物(急停恢复/切割失败重启)则不开爪回观察位,等人工取出
+            need_observe = false;
+        }
         float px, py, ang;
         if (!acquire_pose(&px, &py, &ang)) {
             ESP_LOGW(TAG, "位姿不稳, 重试");
@@ -316,7 +318,9 @@ static void armctrl_task(void *arg)
         if (pick_sequence(mm_x, mm_y, world_ang) != ESP_OK) {
             ESP_LOGW(TAG, "抓取失败, 回观察位");
             emit_cycle_log(t_identified, 0, 0, 0, false);
-            go_observe(); s_run = false; continue;
+            go_observe();
+            need_observe = false;
+            s_run = false; continue;
         }
         int64_t t_picked = esp_timer_get_time();
         s_holding = true;   // 爪已闭合夹住电池(直到place尝试完成)
@@ -326,6 +330,7 @@ static void armctrl_task(void *arg)
             emit_cycle_log(t_identified, t_picked, 0, 0, false);
             (void)armctrl_move_arm(s_cal.blade_x, s_cal.blade_y, s_cal.blade_safe_z, 1400);
             go_observe_ex(false);   // 不开爪 —— 半切开的电池绝不在刀口旁松掉
+            need_observe = false;
             s_run = false;
             continue;
         }
@@ -348,6 +353,7 @@ static void armctrl_task(void *arg)
         s_stats_session++;
         stats_save();
         go_observe();
+        need_observe = false;
         ESP_LOGI(TAG, "完整循环完成(累计%" PRIu32 "/本次%" PRIu32 ")", s_stats_total, s_stats_session);
         if (!s_continuous) {
             s_run = false;
