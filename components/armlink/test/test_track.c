@@ -28,8 +28,67 @@ static void test_motion_frame_rejected(void) {
     CHECK(fabsf(out.cy - 182.0f) < 1.0f, "first accepted frame initializes estimate to detection");
 }
 
+// ---- 测试2: 类别翻转框跳(AA<->9V, 2026-07-06晚日志真实框) ----
+static void test_class_flip_no_jump(void) {
+    track_state_t tr;
+    track_init(&tr);
+    track_resume(&tr, 0);
+    int64_t ts = 0;
+    float last_cx = 0; bool have_last = false;
+    for (int i = 0; i < 10; i++) {
+        track_box_t b;
+        if (i % 2 == 0) { b = (track_box_t){ .cx=367.5f, .cy=182.0f, .w=165, .h=60, .angle_deg=-1, .score=0.73f, .anisotropy=0 }; }   // AA [285,152,450,212]
+        else            { b = (track_box_t){ .cx=336.5f, .cy=176.5f, .w=109, .h=63, .angle_deg=-1, .score=0.73f, .anisotropy=0 }; }   // 9V [282,145,391,208]
+        ts += 250000;
+        track_update(&tr, &b, 1, ts);
+        track_output_t out; track_get(&tr, &out);
+        if (have_last) {
+            CHECK(fabsf(out.cx - last_cx) <= 3.0f, "class-flip frame must not jump filtered center >3px");
+        }
+        last_cx = out.cx; have_last = true;
+    }
+}
+
+// ---- 测试3: 置信度闪烁(0.73<->0.12) ----
+static void test_score_flicker_no_break(void) {
+    track_state_t tr;
+    track_init(&tr);
+    track_resume(&tr, 0);
+    int64_t ts = 0;
+    float scores[] = {0.73f, 0.73f, 0.73f, 0.12f, 0.73f, 0.73f};
+    for (int i = 0; i < 6; i++) {
+        track_box_t b = { .cx=330, .cy=182, .w=165, .h=60, .angle_deg=-1, .score=scores[i], .anisotropy=0 };
+        ts += 250000;
+        track_update(&tr, &b, 1, ts);
+    }
+    track_output_t out; track_get(&tr, &out);
+    CHECK(out.confirmed, "low-score dip(below 0.25 update-threshold, but track already confirmed) must not break confirmed track");
+    // 注: score=0.12 < UPDATE门限(0.25),该帧按丢检处理(滑行),不应导致轨迹丢失
+}
+
+// ---- 测试4: 底部持续误检不得劫持轨迹(2026-07-06晚日志真实误检框) ----
+static void test_bottom_false_positive_rejected(void) {
+    track_state_t tr;
+    track_init(&tr);
+    track_resume(&tr, 0);
+    int64_t ts = 0;
+    for (int i = 0; i < 8; i++) {
+        track_box_t boxes[2];
+        boxes[0] = (track_box_t){ .cx=330, .cy=182, .w=165, .h=60, .angle_deg=-1, .score=0.73f, .anisotropy=0 };   // 真目标
+        boxes[1] = (track_box_t){ .cx=142, .cy=444, .w=269, .h=54, .angle_deg=-1, .score=0.27f, .anisotropy=0 };   // 底部误检 [8,417,277,471]
+        ts += 250000;
+        track_update(&tr, boxes, 2, ts);
+    }
+    track_output_t out; track_get(&tr, &out);
+    CHECK(out.confirmed, "tracker must confirm on the real target");
+    CHECK(fabsf(out.cy - 182.0f) < 5.0f, "persistent low-score false positive must not hijack the track");
+}
+
 int main(void) {
     test_motion_frame_rejected();
+    test_class_flip_no_jump();
+    test_score_flicker_no_break();
+    test_bottom_false_positive_rejected();
     printf(fails ? "\n%d FAILED\n" : "\nALL PASS\n", fails);
     return fails ? 1 : 0;
 }
