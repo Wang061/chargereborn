@@ -98,6 +98,13 @@ void armlink_track_resume(void)
     int64_t now = esp_timer_get_time();
     xSemaphoreTake(s_lock, portMAX_DELAY);
     track_resume(&s_tracker, now);
+    // 同锁内立即失效已发布快照: resume(硬重置)到下一帧检测发布之间有最长一帧(~300ms)窗口,
+    // 不清 s_last 的话 acquire_pose 首轮轮询(60ms)会吃到复位前遗留的 stable 快照
+    // (2026-07-07 上板实测: pose ok 与 resume 同 tick 出现,物理上不可能——STABLE 需≥10帧)。
+    s_last.valid = false;
+    s_last.stable = false;
+    s_last.coasting = false;
+    s_last.frame_id++;
     xSemaphoreGive(s_lock);
 }
 
