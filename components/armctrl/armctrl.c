@@ -12,6 +12,7 @@
 #include "nvs.h"
 #include <math.h>
 #include <inttypes.h>
+#include <string.h>
 
 static const char *TAG = "armctrl";
 
@@ -23,8 +24,31 @@ static volatile bool s_estop = false;   // 急停锁存; 置位后拒绝任何�
 
 #define SETTLE_MS 200   // 步间稳定余量(ms), >= 保证舵机到位
 
-#define WRIST_CCW_COMP_DEG 7.0f
+#define ARMCTRL_PI 3.14159265f
+
+// 抓取补偿入口: 先保留当前实测的 -Y 回退补偿；其余远近/角度项默认 0，必须按
+// docs/ai/GRASP_ACCURACY_PLAN.md 的记录表实测后再调。
+#define WRIST_CCW_COMP_DEG -1.0f
 #define PICK_BACK_COMP_MM 5.0f
+#define GRASP_R0_MM 120.0f
+#define GRASP_KX_R 0.0f
+#define GRASP_KY_R 0.0f
+#define GRASP_KZ_R 0.0f
+#define GRASP_COMP_LONG_MM 0.0f
+#define GRASP_COMP_NORM_MM 0.0f
+#define GRASP_KZ_WRIST 0.0f
+
+typedef struct {
+    float raw_x, raw_y;
+    float pick_x, pick_y;
+    float pick_z, pre_z;
+    float world_ang_deg;
+    float base_yaw_deg;
+    float wrist_rel_deg;
+    float range_mm;
+    float comp_dx, comp_dy, comp_dz;
+    int wrist_pwm;
+} grasp_pose_t;
 
 static volatile bool s_continuous = false;
 static float s_processed_px[8][2];   // 连续模式防重抓: 本次运行会话已处理目标的px中心
@@ -195,44 +219,63 @@ static bool acquire_pose(float *out_px, float *out_py, float *out_ang)
     }
 }
 
-// 世界长轴角 -> 腕#004 PWM。抓取时腕轴对齐电池长轴,不使用目标左右偏移来算腕角。
-// 真机#004实测: PWM增大方向与世界角正方向相反,所以角度项取负。
-// 注: spec §4.4 的"减去抓取点方位角(底座旋转)"耦合在此折进经验 wrist_zero_deg -
-// 与 OpenMV 参考(get_grip_angle_deg 用经验偏移,不显式减方位角)一致,G1 标定 wrist_zero_deg 时一并吸收。
-static int wrist_pwm_for_angle(float world_ang_deg)
+static float wrap_axis_deg(float a)
 {
-    float a = world_ang_deg + WRIST_CCW_COMP_DEG + s_cal.wrist_zero_deg;
     while (a >= 90.0f) a -= 180.0f;
     while (a < -90.0f) a += 180.0f;
-    int pwm = s_cal.wrist_center_pwm - (int)(a * s_cal.wrist_k);
-    return armlink_clamp_pwm(pwm);
+    return a;
 }
 
-// 抓取序列: 正上方悬停(可急停) -> 预降 -> 腕对齐 -> 最终下降 -> 夹 -> 抬到carry。
-static esp_err_t pick_sequence(float mm_x, float mm_y, float world_ang)
+static void compute_grasp_pose(float mm_x, float mm_y, float world_ang, grasp_pose_t *g)
 {
-    float pre_z = s_cal.pick_z + 20.0f;   // 预抓高度(pick 上方 20mm)
-    if (pre_z > s_cal.approach_z) pre_z = s_cal.approach_z;
-    float pick_x = mm_x;
-    float pick_y = mm_y - PICK_BACK_COMP_MM;   // +Y is arm-forward; back compensation is -Y.
+    memset(g, 0, sizeof(*g));
+    g->raw_x = mm_x;
+    g->raw_y = mm_y;
+    g->world_ang_deg = world_ang;
 
+    g->range_mm = sqrtf(mm_x * mm_x + mm_y * mm_y);
+    float dr = g->range_mm - GRASP_R0_MM;
+
+    float rad = world_ang * ARMCTRL_PI / 180.0f;
+    float ux = cosf(rad), uy = sinf(rad);       // 电池长轴方向(世界坐标)
+    float vx = -sinf(rad), vy = cosf(rad);      // 垂直电池长轴方向
+
+    g->comp_dx = GRASP_KX_R * dr + GRASP_COMP_LONG_MM * ux + GRASP_COMP_NORM_MM * vx;
+    g->comp_dy = -PICK_BACK_COMP_MM + GRASP_KY_R * dr + GRASP_COMP_LONG_MM * uy + GRASP_COMP_NORM_MM * vy;
+
+    // 电池世界角必须换成末端局部坐标角: 底座转多少,腕相对角就要扣多少。
+    g->base_yaw_deg = (mm_x == 0.0f && mm_y == 0.0f) ? 0.0f : atan2f(mm_x, mm_y) * 180.0f / ARMCTRL_PI;
+    g->wrist_rel_deg = wrap_axis_deg(world_ang - g->base_yaw_deg + WRIST_CCW_COMP_DEG + s_cal.wrist_zero_deg);
+    g->comp_dz = GRASP_KZ_R * dr + GRASP_KZ_WRIST * fabsf(sinf(g->wrist_rel_deg * ARMCTRL_PI / 180.0f));
+
+    g->pick_x = mm_x + g->comp_dx;
+    g->pick_y = mm_y + g->comp_dy;
+    g->pick_z = s_cal.pick_z + g->comp_dz;
+    g->pre_z = g->pick_z + 20.0f;   // 预抓高度(pick 上方 20mm)
+    if (g->pre_z > s_cal.approach_z) g->pre_z = s_cal.approach_z;
+
+    // 真机#004实测: PWM增大方向与世界角正方向相反,所以角度项取负。若上机验证方向相反,
+    // 只改这里的符号,不要再把底座角耦合塞回 wrist_zero_deg。
+    g->wrist_pwm = armlink_clamp_pwm(s_cal.wrist_center_pwm - (int)(g->wrist_rel_deg * s_cal.wrist_k));
+}
+
+// 抓取序列: 正上方悬停(可急停) -> 高处腕对齐 -> 预降 -> 最终下降 -> 夹 -> 抬到carry。
+static esp_err_t pick_sequence(const grasp_pose_t *g)
+{
     armctrl_move_servo(5, s_cal.gripper_open_pwm, s_cal.gripper_time_ms);   // 确保开爪
 
     // 1. 目标正上方安全高度悬停(此处人可经 /arm_estop 或断电随时急停)
-    if (armctrl_move_arm(mm_x, mm_y, s_cal.approach_z, 1500) != ESP_OK) return ESP_FAIL;
-    // 2. 腕对齐电池长轴
-    armctrl_move_servo(4, wrist_pwm_for_angle(world_ang), 800);
-    ESP_LOGI(TAG, "pick comp: xy(%.1f,%.1f)->(%.1f,%.1f) back=%.1fmm wrist=%.1f->%.1f",
-             mm_x, mm_y, pick_x, pick_y, PICK_BACK_COMP_MM,
-             world_ang, world_ang + WRIST_CCW_COMP_DEG);
+    if (armctrl_move_arm(g->pick_x, g->pick_y, s_cal.approach_z, 1500) != ESP_OK) return ESP_FAIL;
+    // 2. 在高处腕对齐电池长轴,低处只做下降/闭爪,避免扫碰目标。
+    armctrl_move_servo(4, g->wrist_pwm, 800);
     // 3. 预降
-    if (armctrl_move_arm(pick_x, pick_y, pre_z, 1200) != ESP_OK) return ESP_FAIL;
+    if (armctrl_move_arm(g->pick_x, g->pick_y, g->pre_z, 1200) != ESP_OK) return ESP_FAIL;
     // 4. 最终下降到抓取高度
-    if (armctrl_move_arm(pick_x, pick_y, s_cal.pick_z, 1400) != ESP_OK) return ESP_FAIL;
+    if (armctrl_move_arm(g->pick_x, g->pick_y, g->pick_z, 1400) != ESP_OK) return ESP_FAIL;
     // 5. 夹爪闭合
     armctrl_move_servo(5, s_cal.gripper_close_pwm, s_cal.gripper_time_ms);
     // 6. 抬起到搬运高度
-    if (armctrl_move_arm(pick_x, pick_y, s_cal.carry_z, 1400) != ESP_OK) return ESP_FAIL;
+    if (armctrl_move_arm(g->pick_x, g->pick_y, s_cal.carry_z, 1400) != ESP_OK) return ESP_FAIL;
     // 7. 腕回中位(搬运姿态)
     armctrl_move_servo(4, s_cal.wrist_center_pwm, 800);
     ESP_LOGI(TAG, "抓取序列完成");
@@ -327,8 +370,14 @@ static void armctrl_task(void *arg)
         float mm_x, mm_y;
         homography_apply(s_cal.H, px, py, &mm_x, &mm_y);
         float world_ang = homography_angle(s_cal.H, ang);
-        ESP_LOGI(TAG, "定位: px(%.1f,%.1f)->mm(%.1f,%.1f) angW=%.1f", px, py, mm_x, mm_y, world_ang);
-        if (pick_sequence(mm_x, mm_y, world_ang) != ESP_OK) {
+        grasp_pose_t gp;
+        compute_grasp_pose(mm_x, mm_y, world_ang, &gp);
+        ESP_LOGI(TAG, "定位: px(%.1f,%.1f)->mm(%.1f,%.1f) angW=%.1f base=%.1f wristRel=%.1f pwm=%d",
+                 px, py, mm_x, mm_y, world_ang, gp.base_yaw_deg, gp.wrist_rel_deg, gp.wrist_pwm);
+        ESP_LOGI(TAG, "抓取补偿: r=%.1f comp(%.1f,%.1f,%.1f) pick(%.1f,%.1f,%.1f) pre_z=%.1f",
+                 gp.range_mm, gp.comp_dx, gp.comp_dy, gp.comp_dz,
+                 gp.pick_x, gp.pick_y, gp.pick_z, gp.pre_z);
+        if (pick_sequence(&gp) != ESP_OK) {
             ESP_LOGW(TAG, "抓取失败, 回观察位");
             emit_cycle_log(t_identified, 0, 0, 0, false);
             go_observe();

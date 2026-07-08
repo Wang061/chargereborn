@@ -2,7 +2,7 @@
 
 > ChargeReborn Phase 2：Brain(ESP32-S3) 用视觉检测 18650 → 逆运动学解算 → 裸协议帧驱动 KM1 机械臂，
 > 完成 识别→抓取→切割→放回→回观察位 的闭环。本文是上板复现与操作手册；物理量待 D2+ 硬件 session 实测填表。
-> 相关：设计 spec `docs/superpowers/specs/2026-07-02-phase2-ik-autograsp-design.md`、安全 `docs/ai/SAFETY.md`、坑 `docs/ai/CRASH_SIGNATURES.md`。
+> 相关：设计 spec `docs/superpowers/specs/2026-07-02-phase2-ik-autograsp-design.md`、抓取精度计划 `docs/ai/GRASP_ACCURACY_PLAN.md`、安全 `docs/ai/SAFETY.md`、坑 `docs/ai/CRASH_SIGNATURES.md`。
 
 ## 1. 架构与数据流
 
@@ -34,6 +34,7 @@
   **✅ 捆绑帧真机验收通过（2026-07-03 G1 步 2）**：COM6 直发 62B 捆绑帧，KM1 逐字节回显、**四关节同动**——多段一帧解析在真机固件上成立，无需拆单帧回退。（此前 Phase 1 只验过单舵机帧。）
 - **唯一驱动者 = armctrl 状态机**。Phase 2 起 `armlink_update_from_ai` 只更新目标缓存，**不再直接发帧**（旧的"每帧自动发坐标"路径已中和）。单舵机/单臂手动联调走 `armctrl_move_servo`/`armctrl_move_arm`（供状态机与联调的低层原语，见 `armctrl.h`）；原独立的 `/arm_test` 手动测试端点已随 G 级分级一并退役。
 - **⚠ `$KMS:x,y,z,t!` 自解算在真机 KM1 固件上未实现**（COM4 直连实测 sscanf 不匹配、两端无回应，见 `CRASH_SIGNATURES.md`）。**唯一可动的驱动 = 裸协议 `{#idxPpwmTms!}`**；IK 在 Brain 侧算完直接下发各舵机 PWM，不依赖 KM1 自解算。
+- **抓取精度提升主线**：后续所有腕角、垂直夹取姿态、TCP、远近补偿和重新标定改动，统一按 `docs/ai/GRASP_ACCURACY_PLAN.md` 执行。关键原则是 `wrist_rel = world_ang - base_yaw + zero`，高处转腕、低处只下降闭爪，补偿必须来自实测记录。
 
 ## 2. 安全模型
 

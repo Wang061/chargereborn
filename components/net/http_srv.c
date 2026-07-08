@@ -5,8 +5,6 @@
 #include "esp_system.h"
 #include "esp_heap_caps.h"
 #include "esp_http_server.h"
-#include <string.h>
-#include "camera.h"
 #include "ai.h"
 #include "armlink.h"
 #include "armcal.h"
@@ -19,14 +17,9 @@ static esp_err_t root_get(httpd_req_t *req)
     const char *html =
         "<!DOCTYPE html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<title>ChargeReborn 采集</title></head>"
+        "<title>ChargeReborn 控制</title></head>"
         "<body style='font-family:sans-serif;text-align:center'>"
-        "<h3>ChargeReborn 数据采集</h3>"
-        "<div>类名 <input id=n value='18650' size=8> "
-        "间隔 <input id=iv value='1.5' size=3>秒 "
-        "<button onclick='shot()'>抓拍</button> "
-        "<button id=run onclick='toggle()'>连拍开始</button> "
-        "已存 <span id=c>0</span> 张</div>"
+        "<h3>ChargeReborn 识别抓取</h3>"
         "<div><button id=det onclick='dtog()'>识别开始</button> <span id=ds>-</span> <span id=ts style='color:#08c'>-</span></div>"
         "<div style='margin:6px'>"
         "<label><input type=checkbox id=cont> 连续模式</label> "
@@ -40,18 +33,6 @@ static esp_err_t root_get(httpd_req_t *req)
         "<canvas id=ov style='position:absolute;left:0;top:0;pointer-events:none'></canvas>"
         "</p>"
         "<script>"
-        "var t=null,cnt=0;"
-        "function nm(){return encodeURIComponent(document.getElementById('n').value||'cap');}"
-        "function shot(){"
-        "fetch('/capture?name='+nm()).then(function(r){return r.blob();}).then(function(b){"
-        "var a=document.createElement('a');a.href=URL.createObjectURL(b);"
-        "a.download=(document.getElementById('n').value||'cap')+'_'+Date.now()+'.jpg';"
-        "a.click();URL.revokeObjectURL(a.href);"
-        "document.getElementById('c').textContent=++cnt;});}"
-        "function toggle(){var b=document.getElementById('run');"
-        "if(t){clearInterval(t);t=null;b.textContent='连拍开始';return;}"
-        "var ms=Math.max(300,parseFloat(document.getElementById('iv').value||'1.5')*1000);"
-        "t=setInterval(shot,ms);b.textContent='连拍停止';}"
         "var dt=null;"
         "function draw(d){var im=document.getElementById('v'),cv=document.getElementById('ov');"
         "cv.width=im.clientWidth;cv.height=im.clientHeight;"
@@ -86,7 +67,7 @@ static esp_err_t root_get(httpd_req_t *req)
         "return fetch('/arm_target');}).then(function(r){return r.json();}).then(drawTrk).catch(function(){});}"
         "function dtog(){var b=document.getElementById('det');"
         "if(dt){clearInterval(dt);dt=null;b.textContent='识别开始';return;}"
-        "dt=setInterval(poll,180);b.textContent='识别停止';}"
+        "poll();dt=setInterval(poll,500);b.textContent='识别停止';}"
         "function arun(on){var c=document.getElementById('cont').checked?1:0;"
         "fetch('/arm_run?on='+on+'&cont='+c).then(function(r){return r.json();}).then(function(d){"
         "document.getElementById('gs').textContent=d.running?(d.cont?'连续运行中':'运行中')"
@@ -249,54 +230,12 @@ static esp_err_t arm_estop_get(httpd_req_t *req)
     return httpd_resp_send(req, buf, n);
 }
 
-static esp_err_t capture_get(httpd_req_t *req)
-{
-    // 解析 ?name=<类名>，只保留 [0-9A-Za-z_-]，缺省 "cap"
-    char name[32] = "cap";
-    size_t qlen = httpd_req_get_url_query_len(req) + 1;
-    if (qlen > 1 && qlen < 128) {
-        char q[128];
-        if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK) {
-            char val[32];
-            if (httpd_query_key_value(q, "name", val, sizeof(val)) == ESP_OK && val[0]) {
-                size_t j = 0;
-                for (size_t i = 0; val[i] && j < sizeof(name) - 1; i++) {
-                    char c = val[i];
-                    if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
-                        (c >= 'a' && c <= 'z') || c == '_' || c == '-') {
-                        name[j++] = c;
-                    }
-                }
-                name[j] = '\0';
-                if (j == 0) strcpy(name, "cap");
-            }
-        }
-    }
-
-    camera_fb_t *fb = camera_capture();
-    if (!fb) {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "capture failed");
-        return ESP_FAIL;
-    }
-
-    static uint32_t seq = 0;
-    char disp[96];
-    snprintf(disp, sizeof(disp),
-             "attachment; filename=\"%s_%" PRIu32 "_%" PRIu32 ".jpg\"",
-             name, esp_log_timestamp(), seq++);
-    httpd_resp_set_type(req, "image/jpeg");
-    httpd_resp_set_hdr(req, "Content-Disposition", disp);
-    esp_err_t r = httpd_resp_send(req, (const char *)fb->buf, fb->len);
-    camera_return(fb);   // 与 camera_capture 配对
-    return r;
-}
-
 void net_http_start(void)
 {
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.stack_size = 8192;   // 默认 4096 不够: detect_get 的 buf[1536]+ai_result_t 会撑爆 httpd 任务栈 → 卡死/崩溃
-    config.max_uri_handlers = 16;   // 默认 8 不够: 已注册 9 个 URI(root/status/capture/detect/arm_*), 超出的会静默注册失败
+    config.max_uri_handlers = 16;   // 当前 8 个 URI,保留余量给调试/后续 dashboard
     if (httpd_start(&server, &config) != ESP_OK) {
         ESP_LOGE(TAG, "httpd_start failed");
         return;
@@ -305,8 +244,6 @@ void net_http_start(void)
     httpd_uri_t status = { .uri = "/status", .method = HTTP_GET, .handler = status_get };
     httpd_register_uri_handler(server, &root);
     httpd_register_uri_handler(server, &status);
-    httpd_uri_t capture = { .uri = "/capture", .method = HTTP_GET, .handler = capture_get };
-    httpd_register_uri_handler(server, &capture);
     httpd_uri_t detect = { .uri = "/detect", .method = HTTP_GET, .handler = detect_get };
     httpd_register_uri_handler(server, &detect);
     httpd_uri_t arm = { .uri = "/arm_target", .method = HTTP_GET, .handler = arm_target_get };
