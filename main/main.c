@@ -10,6 +10,7 @@
 #include "armlink.h"
 #include "kinematics.h"
 #include "armctrl.h"
+#include "voicelink.h"
 
 static const char *TAG = "main";
 
@@ -63,6 +64,7 @@ void app_main(void)
     } else {
         armlink_init();   // 机械臂目标产出器（UART 默认关，不驱动真臂）
         armctrl_init();
+        voicelink_init();   // 语音开始/停止桩（UART 默认关，见 Kconfig CONFIG_VOICELINK_ENABLE）
         xTaskCreate(detect_task, "detect", 8192, NULL, 3, NULL);
     }
 

@@ -1,0 +1,36 @@
+menu "voicelink (语音开始/停止桩)"
+
+    config VOICELINK_ENABLE
+        bool "启用语音链路 UART 接收 (会直接触发连续抓取!)"
+        default n
+        help
+            默认关。开启后 voicelink 监听 UART，收到 KM1 转发的 #Start!/#Stop!
+            会调用 armctrl_request_run() 直接触发/停止连续抓取。启用前必须
+            完成 docs/ai/SAFETY.md 确认并分配 RX 引脚。
+
+    config VOICELINK_UART_PORT_NUM
+        int "UART 端口号"
+        depends on VOICELINK_ENABLE
+        default 2
+        help
+            用 UART2，避开 UART0(主 console)、UART1(armlink 占用)。
+
+    config VOICELINK_UART_RX_GPIO
+        int "RX GPIO (-1=未分配, 拒绝初始化)"
+        depends on VOICELINK_ENABLE
+        default -1
+        help
+            接收脚。默认 -1 强制显式分配；避开 35/36/37(Octal PSRAM)、
+            0/3/45/46(strapping)、19/20(USB-JTAG)、26-32(SPI flash)、
+            43/44(UART0 console)、摄像头占用的 4-13/15-18/21、armlink 占用的 1。
+            推荐 GPIO2（已核对 ESP32-S3 官方引脚表，P2 级无限制通用脚）。
+
+    config VOICELINK_UART_BAUD
+        int "波特率"
+        depends on VOICELINK_ENABLE
+        default 115200
+        help
+            须与语音模块自身 Serial1 配置、以及 KM1 Serial1.begin() 的
+            115200 一致，否则乱码。
+
+endmenu
