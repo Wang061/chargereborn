@@ -51,6 +51,18 @@ void dash_class_sample_init(dash_class_sample_t *s);
 // score < DASH_CLASS_SCORE_MIN 时忽略、保留旧值；否则更新(cls_name 截断到 DASH_CLS_NAME_MAX-1)。
 void dash_class_sample_update(dash_class_sample_t *s, const char *cls_name, float score);
 
+// —— /dash 路由分类：处理通配符路由 "/dash/?*" 命中后的资产分发 ——
+typedef enum {
+    DASH_ROUTE_INDEX,       // 请求路径(去掉查询串后)是 /dash 或 /dash/
+    DASH_ROUTE_APP_JS,      // /dash/app.js
+    DASH_ROUTE_STYLES_CSS,  // /dash/styles.css
+    DASH_ROUTE_NOT_FOUND,   // 其余子路径
+} dash_route_kind_t;
+
+// uri 可能带查询串(如 "/dash/app.js?t=123")，本函数内部按 '?' 截断后再比较，
+// 调用方(httpd handler)不需要预处理。uri 为 NULL 时返回 DASH_ROUTE_NOT_FOUND。
+dash_route_kind_t dash_classify_uri(const char *uri);
+
 #ifdef __cplusplus
 }
 #endif

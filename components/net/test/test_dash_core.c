@@ -108,6 +108,34 @@ static void test_class_sample_name_truncation(void) {
     CHECK(s.cls_name[DASH_CLS_NAME_MAX - 1] == '\0', "truncated cls_name still NUL-terminated");
 }
 
+// ---- 测试8: 基本路由分类(无查询串) ----
+static void test_classify_uri_basic(void) {
+    CHECK(dash_classify_uri("/dash") == DASH_ROUTE_INDEX, "/dash -> INDEX");
+    CHECK(dash_classify_uri("/dash/") == DASH_ROUTE_INDEX, "/dash/ -> INDEX");
+    CHECK(dash_classify_uri("/dash/app.js") == DASH_ROUTE_APP_JS, "/dash/app.js -> APP_JS");
+    CHECK(dash_classify_uri("/dash/styles.css") == DASH_ROUTE_STYLES_CSS, "/dash/styles.css -> STYLES_CSS");
+    CHECK(dash_classify_uri("/dash/unknown.txt") == DASH_ROUTE_NOT_FOUND, "/dash/unknown.txt -> NOT_FOUND");
+    CHECK(dash_classify_uri("/other") == DASH_ROUTE_NOT_FOUND, "unrelated path -> NOT_FOUND");
+}
+
+// ---- 测试9: 查询串截断(关键边界——浏览器缓存戳请求不能被误判 404) ----
+static void test_classify_uri_query_string(void) {
+    CHECK(dash_classify_uri("/dash/app.js?t=12345") == DASH_ROUTE_APP_JS,
+          "app.js with cache-bust query string still classifies as APP_JS");
+    CHECK(dash_classify_uri("/dash/styles.css?v=2") == DASH_ROUTE_STYLES_CSS,
+          "styles.css with query string still classifies as STYLES_CSS");
+    CHECK(dash_classify_uri("/dash?x=1") == DASH_ROUTE_INDEX,
+          "/dash with query string still classifies as INDEX");
+    CHECK(dash_classify_uri("/dash/?x=1") == DASH_ROUTE_INDEX,
+          "/dash/ with query string still classifies as INDEX");
+}
+
+// ---- 测试10: NULL 与空字符串不崩 ----
+static void test_classify_uri_null_and_empty(void) {
+    CHECK(dash_classify_uri(NULL) == DASH_ROUTE_NOT_FOUND, "NULL uri -> NOT_FOUND, no crash");
+    CHECK(dash_classify_uri("") == DASH_ROUTE_NOT_FOUND, "empty uri -> NOT_FOUND");
+}
+
 int main(void) {
     test_ring_order();
     test_ring_overflow_evicts_oldest();
@@ -116,6 +144,9 @@ int main(void) {
     test_ring_preserves_ok_field();
     test_class_sample_threshold();
     test_class_sample_name_truncation();
+    test_classify_uri_basic();
+    test_classify_uri_query_string();
+    test_classify_uri_null_and_empty();
     printf(fails ? "\n%d FAILED\n" : "\nALL PASS\n", fails);
     return fails ? 1 : 0;
 }

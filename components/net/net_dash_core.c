@@ -39,3 +39,17 @@ void dash_class_sample_update(dash_class_sample_t *s, const char *cls_name, floa
     s->cls_name[DASH_CLS_NAME_MAX - 1] = '\0';
     s->score = score;
 }
+
+dash_route_kind_t dash_classify_uri(const char *uri)
+{
+    if (uri == NULL) return DASH_ROUTE_NOT_FOUND;
+
+    size_t len = 0;
+    while (uri[len] != '\0' && uri[len] != '?') len++;   // 截断查询串
+
+    if (len == 5 && strncmp(uri, "/dash", 5) == 0)          return DASH_ROUTE_INDEX;
+    if (len == 6 && strncmp(uri, "/dash/", 6) == 0)         return DASH_ROUTE_INDEX;
+    if (len == 12 && strncmp(uri, "/dash/app.js", 12) == 0) return DASH_ROUTE_APP_JS;
+    if (len == 16 && strncmp(uri, "/dash/styles.css", 16) == 0) return DASH_ROUTE_STYLES_CSS;
+    return DASH_ROUTE_NOT_FOUND;
+}
