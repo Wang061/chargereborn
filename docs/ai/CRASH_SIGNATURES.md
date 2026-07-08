@@ -25,6 +25,20 @@
 - 标签: #wdt #freertos
 -->
 
+### KM1(Open-CESP) 语音/openmv接口共享同一条 RX2 总线，Serial1 无排针引出  (2026-07-08)
+- 症状: 设计阶段基于固件源码反推"Serial1(RX1=GPIO18/TX1=GPIO17) 看起来空闲"，据此设计语音模块接 KM1 Serial1、独立于运动帧通道的转发方案；代码写完、编译通过、烧录成功，用户反馈"板子上没找到 IO17 的位置"——物理排针根本不存在。
+- 根因: 核对原理图（`D:\WJ\jixiebi\5.软件工具\1.原理图\OpenCESP.pdf`，KM1=Open-CESP V1.2）后发现，KM1 的"语音接口"和"openmv接口"（Brain 所接）经二极管共享同一条 RX2(GPIO41)，TX2(GPIO42)则直接扇出到语音接口/openmv接口/蓝牙接口/用户接口等多个连接器。Serial1 在这块板子上根本没有排针引出。"代码里定义的引脚"不等于"板子上实际引出的排针"，对非标准 DevKit 的第三方小板子（教育/竞赛套件配套主控板）尤其如此。
+- 修法: 撤销 Serial1 独立通道方案，改为在 KM1 现有的 `loop_uart()` 分发点（处理共享总线上已攒好的 `"#...!"` 帧的地方）做内容匹配——精确字符串比较区分语音指令帧(`#Start!`/`#Stop!`)和真实运动帧(`#dddPddddTdddd!` 格式)，命中语音指令就转发，不命中走原有 `parse_action` 逻辑。零新增接线，只改一处已有的分发点。见 `docs/superpowers/specs/2026-07-08-voice-start-stop-control-design.md` 的"2026-07-08 当日修正"。
+- 预防: 给不熟悉的第三方硬件分配引脚/设计通信方案前，优先索取/查阅原理图，或让用户核对物理排针确实存在，不要仅凭 `.ino`/固件源码里的 `#define`/引脚映射做设计决策。
+- 标签: #uart #km1 #hardware-assumption #schematic #pinout
+
+### arduino-cli 改源码不加 --clean 会复用旧编译缓存，体积/日志看不出来  (2026-07-08)
+- 症状: 排查"KM1 烧录后机械臂初始姿态异常疑似固件回归"时，做单变量控制测试——把 KM1 重新烧成逐字节原版固件排除嫌疑；`arduino-cli upload` 日志显示 "No changed sectors found, verifying if data is in flash"，误以为已经烧了新内容，实际很可能仍是旧编译产物。
+- 根因: 源码内容改变（含"改回原版"这种反向改动）但不加 `--clean` 时，`arduino-cli compile` 会命中旧编译缓存，不会真正重新编译；`compile` 报的字节数/`upload` 的"No changed sectors"提示都不能证明这次内容确实变了。
+- 修法: 用 `arduino-cli compile --fqbn <board> --clean <sketch>` 强制干净重编译，通过编译产物体积（如本例 400783 字节 vs 之前被污染读数）交叉核实内容确实变了，再 `upload`。
+- 预防: 每次改动 `.ino` 源码后（含"改回上一版"）编译都带 `--clean`；不要用"体积没变/日志没报错"当作"内容没变"的证据，必要时直接对比源文件 diff/hash。
+- 标签: #km1 #arduino-cli #build-cache #methodology
+
 ### S3 flash 后卡 DOWNLOAD 模式不进 app —— USB-Serial-JTAG 复位不重采样 strapping  (2026-07-05)
 - 症状: esptool 烧录成功（hash 校验过 + "Hard resetting via RTS pin... Done"），但之后 monitor 只反复打印 `rst:0x15 (USB_UART_CHIP_RESET),boot:0x23 (DOWNLOAD(USB/UART0))` + `waiting for download`，app 永远不启动。看起来像"烧成砖了"，实际固件完好。日志 `logs/monitor/20260705_reset_test.log`。
 - 根因: ESP32-S3 **原生 USB-Serial-JTAG 只能触发 core reset，不会重新采样 GPIO0 boot-strapping 脚**（乐鑫官方文档确认）。烧录序列把芯片带进 download 模式后，RTS hard_reset 走的是 core reset 路径，download 状态被锁存，无论复位多少次都回到 ROM bootloader。与固件内容无关——不要去改代码/重烧。
