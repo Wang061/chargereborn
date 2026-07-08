@@ -136,6 +136,66 @@ static void test_classify_uri_null_and_empty(void) {
     CHECK(dash_classify_uri("") == DASH_ROUTE_NOT_FOUND, "empty uri -> NOT_FOUND");
 }
 
+// ---- 测试11: JSON 构建——单条 ok=true 记录,字段齐全可用 strstr 验证 ----
+static void test_json_single_entry_shape(void) {
+    dash_log_entry_t e = make_entry(7, true);
+    char buf[512];
+    int n = dash_build_battery_log_json(buf, sizeof(buf), 123456789, 42, 5, 18.0f, &e, 1);
+    CHECK(n > 0 && n < (int)sizeof(buf), "single-entry JSON fits comfortably in 512B buffer");
+    CHECK(strstr(buf, "\"total\":42") != NULL, "total field present");
+    CHECK(strstr(buf, "\"session\":5") != NULL, "session field present");
+    CHECK(strstr(buf, "\"co2_g_per_cell\":18.0") != NULL, "co2_g_per_cell field present");
+    CHECK(strstr(buf, "\"seq_id\":7") != NULL, "entry seq_id present");
+    CHECK(strstr(buf, "\"ok\":true") != NULL, "entry ok:true rendered as JSON literal true, not 1");
+    CHECK(strstr(buf, "\"cls\":\"18650\"") != NULL, "entry cls string present");
+}
+
+// ---- 测试12: ok=false 记录必须原样体现,不能被静默改写成 true ----
+static void test_json_ok_false_entry(void) {
+    dash_log_entry_t e = make_entry(9, false);
+    char buf[512];
+    dash_build_battery_log_json(buf, sizeof(buf), 0, 0, 0, 18.0f, &e, 1);
+    CHECK(strstr(buf, "\"ok\":false") != NULL, "failed-cycle entry rendered as ok:false");
+}
+
+// ---- 测试13: 零条目——logs 数组为空,但外层字段仍完整 ----
+static void test_json_zero_entries(void) {
+    char buf[256];
+    int n = dash_build_battery_log_json(buf, sizeof(buf), 0, 10, 2, 18.0f, NULL, 0);
+    CHECK(n > 0, "zero-entry call still produces valid output");
+    CHECK(strstr(buf, "\"logs\":[]") != NULL, "zero entries -> empty logs array, valid JSON");
+}
+
+// ---- 测试14: buf_sz=0 不崩、不写、返回值仍是期望长度(snprintf 语义) ----
+static void test_json_zero_buf_size_safe(void) {
+    dash_log_entry_t e = make_entry(1, true);
+    int n = dash_build_battery_log_json(NULL, 0, 0, 1, 1, 18.0f, &e, 1);
+    CHECK(n > 0, "buf_sz=0 with NULL buf does not crash, returns expected length like snprintf");
+}
+
+// ---- 测试15: 缓冲区明显小于实际所需——不越界写(用 canary 字节检测) ----
+static void test_json_small_buf_no_overflow(void) {
+    dash_log_entry_t entries[DASH_LOG_RING_CAP];
+    for (int i = 0; i < DASH_LOG_RING_CAP; i++) entries[i] = make_entry((uint32_t)(i + 1), true);
+
+    char buf[40 + 1];   // 明显不够放下 16 条记录的完整 JSON，最后一字节做 canary
+    buf[40] = (char)0x7E;   // canary
+    int n = dash_build_battery_log_json(buf, 40, 0, 1, 1, 18.0f, entries, DASH_LOG_RING_CAP);
+    CHECK(n > 40, "return value reports full would-be length even though truncated");
+    CHECK(buf[40] == (char)0x7E, "canary byte past the 40-byte window untouched -> no overflow");
+    CHECK(buf[39] == '\0' || buf[39] != (char)0x7E, "buffer was actually written into (not a no-op)");
+}
+
+// ---- 测试16: 满载 16 条真实大小的缓冲区里不截断(生产环境实际用的 buf_sz) ----
+static void test_json_full_ring_fits_production_buffer(void) {
+    dash_log_entry_t entries[DASH_LOG_RING_CAP];
+    for (int i = 0; i < DASH_LOG_RING_CAP; i++) entries[i] = make_entry((uint32_t)(i + 1), (i % 3) != 0);
+
+    char buf[3072];   // 与 net_dash.c 生产环境使用的缓冲区大小一致
+    int n = dash_build_battery_log_json(buf, sizeof(buf), 0, 100, 16, 18.0f, entries, DASH_LOG_RING_CAP);
+    CHECK(n > 0 && n < (int)sizeof(buf), "16 full entries fit within the production 3072B buffer with margin");
+}
+
 int main(void) {
     test_ring_order();
     test_ring_overflow_evicts_oldest();
@@ -147,6 +207,12 @@ int main(void) {
     test_classify_uri_basic();
     test_classify_uri_query_string();
     test_classify_uri_null_and_empty();
+    test_json_single_entry_shape();
+    test_json_ok_false_entry();
+    test_json_zero_entries();
+    test_json_zero_buf_size_safe();
+    test_json_small_buf_no_overflow();
+    test_json_full_ring_fits_production_buffer();
     printf(fails ? "\n%d FAILED\n" : "\nALL PASS\n", fails);
     return fails ? 1 : 0;
 }

@@ -63,6 +63,13 @@ typedef enum {
 // 调用方(httpd handler)不需要预处理。uri 为 NULL 时返回 DASH_ROUTE_NOT_FOUND。
 dash_route_kind_t dash_classify_uri(const char *uri);
 
+// 构建 /battery_log 响应 JSON。返回值语义同 snprintf：期望写入的总长度(不含结尾NUL)，
+// 调用方可用返回值 >= buf_sz 判断是否发生截断。buf_sz==0 时安全返回期望长度、不写任何字节。
+int dash_build_battery_log_json(char *buf, size_t buf_sz,
+                                 int64_t now_us, uint32_t total, uint32_t session,
+                                 float co2_g_per_cell,
+                                 const dash_log_entry_t *entries, int entry_count);
+
 #ifdef __cplusplus
 }
 #endif
