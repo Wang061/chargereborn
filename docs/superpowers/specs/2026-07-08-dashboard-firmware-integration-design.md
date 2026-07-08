@@ -37,7 +37,7 @@
 
 **做**：
 1. 固件新增 `components/net/net_dash.c`（+头文件）：内嵌 dashboard 静态资产、`/battery_log` 端点（溯源+碳减排真数据）、事件回调环形缓冲、检出类别低频采样缓存。
-2. `http_srv.c` 挂接 `net_dash_register()`（一行调用），无其余改动。
+2. `http_srv.c` 挂接：`httpd_config_t.uri_match_fn` 赋值 + 末尾调用 `net_dash_register()`（两行改动），无其余改动。
 3. 网页侧：急停接 `/arm_estop`（含解除锁存按钮）、板上自动直连、溯源/碳面板改真数据轮询、`mock-server.js` 补 `/brain/battery_log` mock。
 4. 文档：`DEFENSE_GUIDE.md` 部署步骤与话术改为 HTTP 直连口径；`docs/ai/DASHBOARD_INTEGRATION.md` 顶部加状态注记（WS 方案未落地，本轮改走 HTTP，原文留档供未来参考）。
 5. Git：先把当前 `armctrl.c`/`http_srv.c`/`ARM_PIPELINE.md` 的未提交 WIP 单独提交；`chargereborn-dashboard/` 随本轮改动一并入库。
@@ -76,7 +76,7 @@ components/net/
 ├── net_dash.c          # 新增
 ├── include/
 │   └── net_dash.h       # 新增：void net_dash_register(httpd_handle_t server);
-├── http_srv.c           # 改：末尾调用 net_dash_register(server)
+├── http_srv.c           # 改：config.uri_match_fn 赋值 + 末尾调用 net_dash_register(server)
 └── CMakeLists.txt        # 改：SRCS 加 net_dash.c；EMBED_TXTFILES 三个资产
 ```
 
@@ -94,6 +94,7 @@ components/net/
   - URI 以 `/dash/app.js` 结尾 → 回内嵌 JS（`application/javascript`）。
   - URI 以 `/dash/styles.css` 结尾 → 回内嵌 CSS（`text/css`）。
   - 其余（未知子路径）→ 404。
+  - 实现注意：`req->uri` 含查询串（如 `?t=123`），分发前先按 `?` 截断再比较，避免带缓存戳的请求被误判成"未知子路径"。
 
 URI handler 总数：现有 8 个 + `/dash` 通配 1 个 + `/battery_log` 1 个 = 10，仍在 `config.max_uri_handlers = 16` 之内。
 
@@ -172,7 +173,7 @@ GET /battery_log →
 
 ### 4.5 `http_srv.c` 挂接点
 
-`net_http_start()` 末尾、`ESP_LOGI(TAG, "http server up...")` 之前加一行 `net_dash_register(server);`。不改 `httpd_config_t` 之外的现有代码路径（`uri_match_fn` 赋值也在 `net_http_start` 内的 `config` 初始化处补一行）。
+两行改动，位置都在 `net_http_start()` 内：`httpd_config_t` 初始化处补 `config.uri_match_fn = httpd_uri_match_wildcard;`；`httpd_start()` 成功、`ESP_LOGI(TAG, "http server up...")` 之前补 `net_dash_register(server);`。不改该函数之外的任何代码路径。
 
 ## 5. 网页侧改动详细设计（`chargereborn-dashboard/dashboard/`）
 
@@ -197,8 +198,8 @@ GET /battery_log →
 
 ### 5.4 碳面板改真数据
 
-- `总量`卡片：`armctrl_get_stats().total × 18` 克（真实，NVS 持久化，跨重启保留）。
-- 原"今日/本周"两张卡片 → 改标签为**"本次会话"单卡**（`session × 18` 克），如实反映数据来源（无按天分桶持久化，见 §2 不做清单）——不显示编造的"今日"/"本周"数字。
+- `总量`卡片：`total × co2_g_per_cell` 克（`co2_g_per_cell` 取自 `/battery_log` 响应字段，不在前端硬编码，与 §4.4 "改固件那一处常量即可"的设计意图保持一致；真实数据，NVS 持久化，跨重启保留）。
+- 原"今日/本周"两张卡片 → 改标签为**"本次会话"单卡**（`session × co2_g_per_cell` 克），如实反映数据来源（无按天分桶持久化，见 §2 不做清单）——不显示编造的"今日"/"本周"数字。
 - 原七日柱状图 → 改为**本次会话逐颗累计阶梯图**：横轴是环形缓冲里 `ok=true` 条目的顺序（最多 16 颗），纵轴是累计克数（单调递增阶梯线），是真实数据、且天然好看（demo 越跑越高）。超过 16 颗后图表只反映最近 16 颗的窗口（环形缓冲覆盖旧数据），这是已知限制，不影响"总量"数字的正确性。
 
 ### 5.5 `mock-server.js`
