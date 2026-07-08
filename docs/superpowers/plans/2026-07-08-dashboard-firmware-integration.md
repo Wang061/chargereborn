@@ -18,7 +18,7 @@
 - 碳系数唯一数值来源：`components/net/net_dash.c` 的 `#define CARBON_G_PER_CELL 18.0f`；其余代码（含前端）一律从 `/battery_log` 响应的 `co2_g_per_cell` 字段读取，不硬编码。
 - 环形缓冲容量 `DASH_LOG_RING_CAP = 16`；类别采样门限 `0.40f`（与 `http_srv.c` 现有 `DETECT_OVERLAY_MIN_SCORE` 一致）。
 - flash 操作必须当场向用户确认（本项目铁律），本计划里每处 flash 步骤都会明确标出。
-- host 单测统一用项目既有约定：`env PATH="/d/anaconda/Library/mingw-w64/bin:/usr/bin:/bin" gcc <test.c> <impl.c> -I<component>/include -lm -o /tmp/<name> && /tmp/<name>`（与 `components/armlink/test/test_track.c` 的验证方式一致）。
+- host 单测统一用项目既有约定：`env PATH="/d/anaconda/Library/mingw-w64/bin:/usr/bin:/bin" gcc -D__USE_MINGW_ANSI_STDIO=1 <test.c> <impl.c> -I<component>/include -lm -o /tmp/<name> && /tmp/<name>`（与 `components/armlink/test/test_track.c` 的验证方式一致；**-D__USE_MINGW_ANSI_STDIO=1 必需**——此 mingw 工具链默认链接的 snprintf 截断时返回 -1 而非 C99 规定的"期望写入长度"，加这个宏切到 mingw 自带的 C99 兼容实现；ESP32 目标端 newlib 的 snprintf 本身就是标准行为，不受此坑影响，只有 host 单测需要这个 flag，2026-07-08 实测发现）。
 - 日志 TAG 统一用 `"net_dash"`；不用裸 `printf` 做正式固件日志。
 - 前置设计文档：`docs/superpowers/specs/2026-07-08-dashboard-firmware-integration-design.md`（已用户审阅通过）。
 
@@ -278,7 +278,7 @@ int main(void) {
 - [ ] **Step 3: 运行测试，确认因缺少实现而失败**
 
 ```bash
-env PATH="/d/anaconda/Library/mingw-w64/bin:/usr/bin:/bin" gcc components/net/test/test_dash_core.c components/net/net_dash_core.c -Icomponents/net/include -lm -o /tmp/dash_core_test
+env PATH="/d/anaconda/Library/mingw-w64/bin:/usr/bin:/bin" gcc -D__USE_MINGW_ANSI_STDIO=1 components/net/test/test_dash_core.c components/net/net_dash_core.c -Icomponents/net/include -lm -o /tmp/dash_core_test
 ```
 
 Expected: 编译失败（`net_dash_core.c` 尚不存在/为空）。若此步骤因为你已经手滑写了实现而编译通过，先清空 `net_dash_core.c` 内容重来——这一步的目的是确认测试确实在检验真实逻辑，不是空转。
@@ -333,7 +333,7 @@ void dash_class_sample_update(dash_class_sample_t *s, const char *cls_name, floa
 - [ ] **Step 5: 运行测试，确认全部通过**
 
 ```bash
-env PATH="/d/anaconda/Library/mingw-w64/bin:/usr/bin:/bin" gcc components/net/test/test_dash_core.c components/net/net_dash_core.c -Icomponents/net/include -lm -o /tmp/dash_core_test && /tmp/dash_core_test
+env PATH="/d/anaconda/Library/mingw-w64/bin:/usr/bin:/bin" gcc -D__USE_MINGW_ANSI_STDIO=1 components/net/test/test_dash_core.c components/net/net_dash_core.c -Icomponents/net/include -lm -o /tmp/dash_core_test && /tmp/dash_core_test
 ```
 
 Expected: 输出 `ALL PASS`，退出码 0。
@@ -436,7 +436,7 @@ int main(void) {
 - [ ] **Step 3: 运行测试，确认新增的 3 个测试函数因缺少实现而失败**
 
 ```bash
-env PATH="/d/anaconda/Library/mingw-w64/bin:/usr/bin:/bin" gcc components/net/test/test_dash_core.c components/net/net_dash_core.c -Icomponents/net/include -lm -o /tmp/dash_core_test
+env PATH="/d/anaconda/Library/mingw-w64/bin:/usr/bin:/bin" gcc -D__USE_MINGW_ANSI_STDIO=1 components/net/test/test_dash_core.c components/net/net_dash_core.c -Icomponents/net/include -lm -o /tmp/dash_core_test
 ```
 
 Expected: 编译失败（`dash_classify_uri` 未定义，链接或编译报错）。
@@ -464,7 +464,7 @@ dash_route_kind_t dash_classify_uri(const char *uri)
 - [ ] **Step 5: 运行测试，确认全部通过**
 
 ```bash
-env PATH="/d/anaconda/Library/mingw-w64/bin:/usr/bin:/bin" gcc components/net/test/test_dash_core.c components/net/net_dash_core.c -Icomponents/net/include -lm -o /tmp/dash_core_test && /tmp/dash_core_test
+env PATH="/d/anaconda/Library/mingw-w64/bin:/usr/bin:/bin" gcc -D__USE_MINGW_ANSI_STDIO=1 components/net/test/test_dash_core.c components/net/net_dash_core.c -Icomponents/net/include -lm -o /tmp/dash_core_test && /tmp/dash_core_test
 ```
 
 Expected: 输出 `ALL PASS`（10 个测试函数全部通过），退出码 0。
@@ -599,7 +599,7 @@ int main(void) {
 - [ ] **Step 3: 运行测试，确认因缺少实现而失败**
 
 ```bash
-env PATH="/d/anaconda/Library/mingw-w64/bin:/usr/bin:/bin" gcc components/net/test/test_dash_core.c components/net/net_dash_core.c -Icomponents/net/include -lm -o /tmp/dash_core_test
+env PATH="/d/anaconda/Library/mingw-w64/bin:/usr/bin:/bin" gcc -D__USE_MINGW_ANSI_STDIO=1 components/net/test/test_dash_core.c components/net/net_dash_core.c -Icomponents/net/include -lm -o /tmp/dash_core_test
 ```
 
 Expected: 编译失败（`dash_build_battery_log_json` 未定义）。
@@ -643,7 +643,7 @@ int dash_build_battery_log_json(char *buf, size_t buf_sz,
 - [ ] **Step 5: 运行测试，确认全部通过**
 
 ```bash
-env PATH="/d/anaconda/Library/mingw-w64/bin:/usr/bin:/bin" gcc components/net/test/test_dash_core.c components/net/net_dash_core.c -Icomponents/net/include -lm -o /tmp/dash_core_test && /tmp/dash_core_test
+env PATH="/d/anaconda/Library/mingw-w64/bin:/usr/bin:/bin" gcc -D__USE_MINGW_ANSI_STDIO=1 components/net/test/test_dash_core.c components/net/net_dash_core.c -Icomponents/net/include -lm -o /tmp/dash_core_test && /tmp/dash_core_test
 ```
 
 Expected: 输出 `ALL PASS`（16 个测试函数全部通过），退出码 0。这是 `net_dash_core` 的最终形态，之后不再修改，只被 `net_dash.c` 调用。
