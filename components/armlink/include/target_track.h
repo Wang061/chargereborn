@@ -13,6 +13,7 @@ extern "C" {
 
 // —— 输入：单帧一个候选框(与 ai_box_t 解耦，调用方负责从 ai_box_t 转换)——
 typedef struct {
+    int   cls;          // 类别 id；未知为 -1
     float cx, cy;       // 中心像素坐标
     float w, h;         // 框宽高(像素)
     float angle_deg;    // 长轴角 [0,180)；<0 = 无效(该框不参与角度关联/更新)
@@ -25,14 +26,13 @@ typedef struct {
     bool     confirmed;    // 已过 min_hits，可用作抓取目标
     bool     coasting;     // 本帧未关联到检测，靠 predict 滑行(陈旧值，不可用于开始新动作)
     bool     stable;       // 已过稳定判据(含滞回)，armctrl 可据此结束 ACQUIRE
+    int      cls;          // 最近一次真实关联(非滑行)帧的类别 id；未知为 -1
     float    cx, cy;       // 滤波后中心(像素)
     float    w, h;         // 滤波后宽高(像素)
     float    angle_deg;    // 滤波后长轴角 [0,180)
     float    score;        // 最近一次真实关联(非滑行)帧的分数，滑行期间保持不变
     uint32_t hits;         // 累计确认命中数(供调试/日志)
 } track_output_t;
-
-#define TRACK_MAX_EXCLUSIONS 8
 
 // —— 内部状态：字段全暴露供调用方静态分配(同 armcal_t 惯例)，调用方不应直接改字段，用下方 API ——
 typedef struct {
@@ -58,6 +58,7 @@ typedef struct {
 
     float last_nu_cx, last_nu_cy;   // 最近一次关联的新息(供稳定判据)
     float last_score;
+    int   last_cls;
 
     // 挪动重锁缓冲：连续门外候选(最多看最近 3 个，判断是否彼此聚集)
     float reject_cx[3], reject_cy[3];
@@ -70,23 +71,16 @@ typedef struct {
     int   win_filled;
     int   stable_enter_streak;
     int   stable_exit_streak;
-
-    // 连续模式防重抓：初始化排除区(px 域)；跨 track_resume 持续，只由 track_set_exclusions 管理
-    float excl_px[TRACK_MAX_EXCLUSIONS][2];
-    int   excl_count;
 } track_state_t;
 
-// 清零到 LOST/未初始化状态，含排除区一并清空(用于开机/全新会话)。
+// 清零到 LOST/未初始化状态(用于开机/全新会话)。
 void track_init(track_state_t *tr);
-
-// 设置本轮排除区(连续模式防重抓)。pts_px[i]={px,py}；n=0 清空。n>TRACK_MAX_EXCLUSIONS 截断到上限。
-void track_set_exclusions(track_state_t *tr, const float pts_px[][2], int n);
 
 // 挂起：armctrl 抓取序列第一个运动原语起调用。挂起期间 track_update 立即返回 false，不做任何计算。
 void track_suspend(track_state_t *tr);
 
 // 恢复=硬重置：清估计、清 confirmed/hits/滑窗/稳定锁存，记录 gate_ts_us=now_us
-// (早于此的检测按运动帧丢弃)。排除区(excl_px/excl_count)不受影响——那是跨轮状态。
+// (早于此的检测按运动帧丢弃)。
 void track_resume(track_state_t *tr, int64_t now_us);
 
 // 喂一帧检测(count 可为 0，boxes 对应可为 NULL)。capture_ts_us 早于 gate_ts_us 或 tr->suspended

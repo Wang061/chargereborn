@@ -126,10 +126,11 @@ extern "C" void ai_get_last(ai_result_t *out) {
 extern "C" const char *ai_class_name(int cls) {
     // 4 类电池模型, 类别 id 顺序 = 训练集 data.yaml (0:21700 1:18650 2:9V 3:AA)
     switch (cls) {
-    case 0: return "21700";
-    case 1: return "18650";
-    case 2: return "9V";
-    case 3: return "AA";
+    case AI_CLASS_21700: return "21700";
+    case AI_CLASS_18650: return "18650";
+    case AI_CLASS_9V: return "9V";
+    case AI_CLASS_AA: return "AA";
+    case AI_CLASS_BAD_AA: return "bad_AA";
     default: return "obj";
     }
 }

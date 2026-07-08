@@ -4,6 +4,8 @@
 #include "armlink_frame.h"
 #include "armlink_uart.h"
 #include "armlink.h"
+#include "ai.h"
+#include "battery_policy.h"
 #include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -28,8 +30,9 @@ static volatile bool s_estop = false;   // 急停锁存; 置位后拒绝任何�
 
 // 抓取补偿入口: 先保留当前实测的 -Y 回退补偿；其余远近/角度项默认 0，必须按
 // docs/ai/GRASP_ACCURACY_PLAN.md 的记录表实测后再调。
-#define WRIST_CCW_COMP_DEG -1.0f
-#define PICK_BACK_COMP_MM 5.0f
+#define WRIST_CCW_COMP_DEG -8.0f
+#define PICK_BACK_COMP_MM 7.0f
+#define PICK_LEFT_COMP_MM 7.0f
 #define GRASP_R0_MM 120.0f
 #define GRASP_KX_R 0.0f
 #define GRASP_KY_R 0.0f
@@ -38,6 +41,14 @@ static volatile bool s_estop = false;   // 急停锁存; 置位后拒绝任何�
 #define GRASP_COMP_NORM_MM 0.0f
 #define GRASP_KZ_WRIST 0.0f
 
+#define NORMAL_BIN_X_MM   -150.0f
+#define NORMAL_BIN_Y_MM     75.0f
+#define DANGER_BIN_X_MM   -150.0f
+#define DANGER_BIN_Y_MM      0.0f
+#define BIN_RELEASE_Z_MM   100.0f
+#define CUT_Z_LIFT_MM        0.0f
+#define CUT_CONTACT_DWELL_MS 1000
+
 typedef struct {
     float raw_x, raw_y;
     float pick_x, pick_y;
@@ -45,14 +56,15 @@ typedef struct {
     float world_ang_deg;
     float base_yaw_deg;
     float wrist_rel_deg;
+    float wrist_extra_deg;
     float range_mm;
     float comp_dx, comp_dy, comp_dz;
     int wrist_pwm;
+    int gripper_close_pwm;
+    battery_grasp_mode_t grasp_mode;
 } grasp_pose_t;
 
 static volatile bool s_continuous = false;
-static float s_processed_px[8][2];   // 连续模式防重抓: 本次运行会话已处理目标的px中心
-static int   s_processed_count = 0;
 static int   s_acquire_fail_streak = 0;
 static volatile bool s_holding = false;  // 爪中疑似有物(pick成功置位,place尝试完成清零);急停/切割失败恢复后的run入口据此决定不开爪
 
@@ -112,9 +124,7 @@ void armctrl_request_run(bool on, bool cont) {
     s_run = on;
     s_continuous = cont;
     if (on) {
-        s_processed_count = 0;
         s_acquire_fail_streak = 0;
-        armlink_set_exclusions(NULL, 0);   // 新会话: 清空上一次运行留下的排除点
     }
     ESP_LOGW(TAG, "run=%d cont=%d", on, cont);
 }
@@ -193,7 +203,7 @@ void armctrl_move_servo(int idx, int pwm, int move_ms)
 #define ACQUIRE_TIMEOUT_MS 8000
 #define ACQUIRE_POLL_MS    60
 
-static bool acquire_pose(float *out_px, float *out_py, float *out_ang)
+static bool acquire_pose(arm_target_t *out)
 {
     int waited = 0;
     while (1) {
@@ -204,8 +214,9 @@ static bool acquire_pose(float *out_px, float *out_py, float *out_ang)
         arm_target_t t;
         armlink_get_last_target(&t);
         if (t.valid && t.stable && !t.coasting) {
-            *out_px = t.center_x_px; *out_py = t.center_y_px; *out_ang = t.angle_deg;
-            ESP_LOGI(TAG, "pose ok(stable) px=%.1f py=%.1f ang=%.1f", *out_px, *out_py, *out_ang);
+            if (out) *out = t;
+            ESP_LOGI(TAG, "pose ok(stable) px=%.1f py=%.1f ang=%.1f cls=%s score=%.2f",
+                     t.center_x_px, t.center_y_px, t.angle_deg, ai_class_name(t.cls), t.score);
             return true;
         }
         if (waited >= ACQUIRE_TIMEOUT_MS) {
@@ -226,12 +237,16 @@ static float wrap_axis_deg(float a)
     return a;
 }
 
-static void compute_grasp_pose(float mm_x, float mm_y, float world_ang, grasp_pose_t *g)
+static void compute_grasp_pose(float mm_x, float mm_y, float world_ang,
+                               const battery_grasp_policy_t *policy, grasp_pose_t *g)
 {
     memset(g, 0, sizeof(*g));
     g->raw_x = mm_x;
     g->raw_y = mm_y;
     g->world_ang_deg = world_ang;
+    g->wrist_extra_deg = policy ? policy->wrist_extra_deg : 0.0f;
+    g->gripper_close_pwm = policy ? policy->gripper_close_pwm : s_cal.gripper_close_pwm;
+    g->grasp_mode = policy ? policy->mode : BATTERY_GRASP_HORIZONTAL;
 
     g->range_mm = sqrtf(mm_x * mm_x + mm_y * mm_y);
     float dr = g->range_mm - GRASP_R0_MM;
@@ -240,17 +255,18 @@ static void compute_grasp_pose(float mm_x, float mm_y, float world_ang, grasp_po
     float ux = cosf(rad), uy = sinf(rad);       // 电池长轴方向(世界坐标)
     float vx = -sinf(rad), vy = cosf(rad);      // 垂直电池长轴方向
 
-    g->comp_dx = GRASP_KX_R * dr + GRASP_COMP_LONG_MM * ux + GRASP_COMP_NORM_MM * vx;
+    g->comp_dx = -PICK_LEFT_COMP_MM + GRASP_KX_R * dr + GRASP_COMP_LONG_MM * ux + GRASP_COMP_NORM_MM * vx;
     g->comp_dy = -PICK_BACK_COMP_MM + GRASP_KY_R * dr + GRASP_COMP_LONG_MM * uy + GRASP_COMP_NORM_MM * vy;
 
     // 电池世界角必须换成末端局部坐标角: 底座转多少,腕相对角就要扣多少。
     g->base_yaw_deg = (mm_x == 0.0f && mm_y == 0.0f) ? 0.0f : atan2f(mm_x, mm_y) * 180.0f / ARMCTRL_PI;
-    g->wrist_rel_deg = wrap_axis_deg(world_ang - g->base_yaw_deg + WRIST_CCW_COMP_DEG + s_cal.wrist_zero_deg);
+    g->wrist_rel_deg = wrap_axis_deg(world_ang - g->base_yaw_deg + WRIST_CCW_COMP_DEG +
+                                     s_cal.wrist_zero_deg + g->wrist_extra_deg);
     g->comp_dz = GRASP_KZ_R * dr + GRASP_KZ_WRIST * fabsf(sinf(g->wrist_rel_deg * ARMCTRL_PI / 180.0f));
 
     g->pick_x = mm_x + g->comp_dx;
     g->pick_y = mm_y + g->comp_dy;
-    g->pick_z = s_cal.pick_z + g->comp_dz;
+    g->pick_z = (policy ? policy->pick_z_mm : s_cal.pick_z) + g->comp_dz;
     g->pre_z = g->pick_z + 20.0f;   // 预抓高度(pick 上方 20mm)
     if (g->pre_z > s_cal.approach_z) g->pre_z = s_cal.approach_z;
 
@@ -273,7 +289,7 @@ static esp_err_t pick_sequence(const grasp_pose_t *g)
     // 4. 最终下降到抓取高度
     if (armctrl_move_arm(g->pick_x, g->pick_y, g->pick_z, 1400) != ESP_OK) return ESP_FAIL;
     // 5. 夹爪闭合
-    armctrl_move_servo(5, s_cal.gripper_close_pwm, s_cal.gripper_time_ms);
+    armctrl_move_servo(5, g->gripper_close_pwm, s_cal.gripper_time_ms);
     // 6. 抬起到搬运高度
     if (armctrl_move_arm(g->pick_x, g->pick_y, s_cal.carry_z, 1400) != ESP_OK) return ESP_FAIL;
     // 7. 腕回中位(搬运姿态)
@@ -282,33 +298,28 @@ static esp_err_t pick_sequence(const grasp_pose_t *g)
     return ESP_OK;
 }
 
-// 切割: 移到刀口安全位 -> 下探接触 -> 往复切 cut_times 次 -> 回安全位。
+// 切割: 移到刀口中心安全位 -> 垂直下探接触 -> 回安全位。
 static esp_err_t cut_sequence(void)
 {
-    float sx = s_cal.blade_x - s_cal.cut_offset_x;
-    float ex = s_cal.blade_x + s_cal.cut_offset_x;
+    float bx = s_cal.blade_x;
     float by = s_cal.blade_y;
-    if (armctrl_move_arm(s_cal.blade_x, by, s_cal.blade_safe_z, 1600) != ESP_OK) return ESP_FAIL;
-    if (armctrl_move_arm(sx, by, s_cal.blade_contact_z, 1400) != ESP_OK) return ESP_FAIL;
-    for (int i = 0; i < s_cal.cut_times; i++) {
-        if (armctrl_move_arm(ex, by, s_cal.blade_contact_z, 1000) != ESP_OK) return ESP_FAIL;
-        if (i != s_cal.cut_times - 1) {
-            if (armctrl_move_arm(sx, by, s_cal.blade_contact_z, 1000) != ESP_OK) return ESP_FAIL;
-        }
-    }
-    if (armctrl_move_arm(s_cal.blade_x, by, s_cal.blade_safe_z, 1600) != ESP_OK) return ESP_FAIL;
-    ESP_LOGI(TAG, "切割完成");
+    float safe_z = s_cal.blade_safe_z + CUT_Z_LIFT_MM;
+    float contact_z = s_cal.blade_contact_z + CUT_Z_LIFT_MM;
+    if (armctrl_move_arm(bx, by, safe_z, 1600) != ESP_OK) return ESP_FAIL;
+    if (armctrl_move_arm(bx, by, contact_z, 1400) != ESP_OK) return ESP_FAIL;
+    vTaskDelay(pdMS_TO_TICKS(CUT_CONTACT_DWELL_MS));
+    if (armctrl_move_arm(bx, by, safe_z, 1600) != ESP_OK) return ESP_FAIL;
+    ESP_LOGI(TAG, "切割完成(垂直下探, z+%.0f, dwell=%dms)", CUT_Z_LIFT_MM, CUT_CONTACT_DWELL_MS);
     return ESP_OK;
 }
 
-// 放回: 移到放置点上方 -> 下降 -> 开爪 -> 抬起。
-static esp_err_t place_back(float mm_x, float mm_y)
+// 投篮: 到篮子高位直接开爪抛入，不下降到 place_z，避免撞篮口。
+static esp_err_t place_to_bin(float bin_x, float bin_y, float release_z, const char *name)
 {
-    if (armctrl_move_arm(mm_x, mm_y, s_cal.carry_z, 1600) != ESP_OK) return ESP_FAIL;
-    if (armctrl_move_arm(mm_x, mm_y, s_cal.place_z, 1400) != ESP_OK) return ESP_FAIL;
+    if (armctrl_move_arm(bin_x, bin_y, s_cal.carry_z, 1600) != ESP_OK) return ESP_FAIL;
+    if (armctrl_move_arm(bin_x, bin_y, release_z, 1200) != ESP_OK) return ESP_FAIL;
     armctrl_move_servo(5, s_cal.gripper_open_pwm, s_cal.gripper_time_ms);
-    if (armctrl_move_arm(mm_x, mm_y, s_cal.approach_z, 1400) != ESP_OK) return ESP_FAIL;
-    ESP_LOGI(TAG, "放回完成");
+    ESP_LOGI(TAG, "投放到%s篮: (%.0f,%.0f,%.0f)", name, bin_x, bin_y, release_z);
     return ESP_OK;
 }
 
@@ -353,8 +364,8 @@ static void armctrl_task(void *arg)
             go_observe_ex(!s_holding);   // 爪中疑似有物(急停恢复/切割失败重启)则不开爪回观察位,等人工取出
             need_observe = false;
         }
-        float px, py, ang;
-        if (!acquire_pose(&px, &py, &ang)) {
+        arm_target_t target;
+        if (!acquire_pose(&target)) {
             ESP_LOGW(TAG, "位姿不稳, 重试");
             s_acquire_fail_streak++;
             if (s_acquire_fail_streak >= 3) {
@@ -368,12 +379,17 @@ static void armctrl_task(void *arg)
         int64_t t_identified = esp_timer_get_time();
         armlink_track_suspend();   // 即将开始运动序列: 挂起跟踪器,直到下次 go_observe_ex 内部 resume
         float mm_x, mm_y;
-        homography_apply(s_cal.H, px, py, &mm_x, &mm_y);
-        float world_ang = homography_angle(s_cal.H, ang);
+        homography_apply(s_cal.H, target.center_x_px, target.center_y_px, &mm_x, &mm_y);
+        float world_ang = homography_angle(s_cal.H, target.angle_deg);
+        battery_grasp_policy_t grasp_policy;
+        battery_grasp_policy_for_class(target.cls, s_cal.gripper_close_pwm, &grasp_policy);
         grasp_pose_t gp;
-        compute_grasp_pose(mm_x, mm_y, world_ang, &gp);
-        ESP_LOGI(TAG, "定位: px(%.1f,%.1f)->mm(%.1f,%.1f) angW=%.1f base=%.1f wristRel=%.1f pwm=%d",
-                 px, py, mm_x, mm_y, world_ang, gp.base_yaw_deg, gp.wrist_rel_deg, gp.wrist_pwm);
+        compute_grasp_pose(mm_x, mm_y, world_ang, &grasp_policy, &gp);
+        ESP_LOGI(TAG, "定位: cls=%s px(%.1f,%.1f)->mm(%.1f,%.1f) angW=%.1f base=%.1f wristRel=%.1f pwm=%d",
+                 ai_class_name(target.cls), target.center_x_px, target.center_y_px, mm_x, mm_y,
+                 world_ang, gp.base_yaw_deg, gp.wrist_rel_deg, gp.wrist_pwm);
+        ESP_LOGI(TAG, "抓取策略: %s pick_z=%.1f wrist_extra=%.1f close_pwm=%d",
+                 battery_grasp_mode_name(gp.grasp_mode), gp.pick_z, gp.wrist_extra_deg, gp.gripper_close_pwm);
         ESP_LOGI(TAG, "抓取补偿: r=%.1f comp(%.1f,%.1f,%.1f) pick(%.1f,%.1f,%.1f) pre_z=%.1f",
                  gp.range_mm, gp.comp_dx, gp.comp_dy, gp.comp_dz,
                  gp.pick_x, gp.pick_y, gp.pick_z, gp.pre_z);
@@ -386,31 +402,46 @@ static void armctrl_task(void *arg)
         }
         int64_t t_picked = esp_timer_get_time();
         s_holding = true;   // 爪已闭合夹住电池(直到place尝试完成)
-        // 切割: 抓起 -> 移刀口切割 -> 放回 -> 回观察位(G分级已去除,始终走完整含切流程)
-        if (cut_sequence() != ESP_OK) {
-            ESP_LOGW(TAG, "切割失败, 保持夹持撤离刀口回观察位(等人工取回)");
-            emit_cycle_log(t_identified, t_picked, 0, 0, false);
-            (void)armctrl_move_arm(s_cal.blade_x, s_cal.blade_y, s_cal.blade_safe_z, 1400);
-            go_observe_ex(false);   // 不开爪 —— 半切开的电池绝不在刀口旁松掉
-            need_observe = false;
-            s_run = false;
-            continue;
-        }
-        int64_t t_cut = esp_timer_get_time();
-        if (place_back(mm_x, mm_y) != ESP_OK) {
-            ESP_LOGW(TAG, "放回失败");
+        battery_risk_result_t risk;
+        battery_risk_eval_for_class(target.cls, &risk);
+        ESP_LOGI(TAG, "风险判定: cls=%s risk=%s reasons=0x%08" PRIx32,
+                 ai_class_name(target.cls), battery_risk_level_name(risk.level), risk.reasons);
+
+        int64_t t_cut = 0;
+        bool dangerous = (risk.level == BATTERY_RISK_DANGEROUS);
+        if (!dangerous) {
+            if (cut_sequence() != ESP_OK) {
+                ESP_LOGW(TAG, "切割失败, 保持夹持撤离刀口回观察位(等人工取回)");
+                emit_cycle_log(t_identified, t_picked, 0, 0, false);
+                (void)armctrl_move_arm(s_cal.blade_x, s_cal.blade_y, s_cal.blade_safe_z, 1400);
+                go_observe_ex(false);   // 不开爪 —— 半切开的电池绝不在刀口旁松掉
+                need_observe = false;
+                s_run = false;
+                continue;
+            }
+            t_cut = esp_timer_get_time();
+            if (place_to_bin(NORMAL_BIN_X_MM, NORMAL_BIN_Y_MM, BIN_RELEASE_Z_MM, "正常") != ESP_OK) {
+                ESP_LOGW(TAG, "正常篮投放失败, 保持夹持回观察位等人工取回");
+                emit_cycle_log(t_identified, t_picked, t_cut, 0, false);
+                go_observe_ex(false);
+                need_observe = false;
+                s_run = false;
+                continue;
+            }
+        } else {
+            ESP_LOGW(TAG, "危险电池: 跳过切割, 直接投危险篮");
+            if (place_to_bin(DANGER_BIN_X_MM, DANGER_BIN_Y_MM, BIN_RELEASE_Z_MM, "危险") != ESP_OK) {
+                ESP_LOGW(TAG, "危险篮投放失败, 保持夹持回观察位等人工取回");
+                emit_cycle_log(t_identified, t_picked, 0, 0, false);
+                go_observe_ex(false);
+                need_observe = false;
+                s_run = false;
+                continue;
+            }
         }
         s_holding = s_estop;   // 正常流已过开爪点→false;若place期间被急停中断(开爪可能没执行)→保持true错到安全侧,恢复时不开爪(SAFETY.md流程:先断电人工取出)
         int64_t t_placed = esp_timer_get_time();
         emit_cycle_log(t_identified, t_picked, t_cut, t_placed, true);
-        // 记录本次目标 px 中心到防重抓排除表(px域: 放回原位后,同一观察位下一轮会在同一像素
-        // 位置再次被检出;记 px 而非 mm 是零坐标转换的最简方案)。
-        if (s_processed_count < 8) {
-            s_processed_px[s_processed_count][0] = px;
-            s_processed_px[s_processed_count][1] = py;
-            s_processed_count++;
-            armlink_set_exclusions(s_processed_px, s_processed_count);
-        }
         s_stats_total++;
         s_stats_session++;
         stats_save();

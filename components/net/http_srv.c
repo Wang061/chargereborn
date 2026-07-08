@@ -136,10 +136,11 @@ static esp_err_t arm_target_get(httpd_req_t *req)
     if (t.seen) {
         n = snprintf(buf, sizeof(buf),
             "{\"valid\":%s,\"seen\":true,\"stable\":%s,\"coasting\":%s,\"cx\":%.1f,\"cy\":%.1f,"
-            "\"angle_deg\":%.1f,\"score\":%.2f,\"w\":%u,\"h\":%u,\"frame_id\":%u}",
+            "\"angle_deg\":%.1f,\"score\":%.2f,\"cls\":%d,\"cls_name\":\"%s\",\"w\":%u,\"h\":%u,\"frame_id\":%u}",
             t.valid ? "true" : "false",
             t.stable ? "true" : "false", t.coasting ? "true" : "false",
             t.center_x_px, t.center_y_px, t.angle_deg, t.score,
+            t.cls, ai_class_name(t.cls),
             (unsigned)t.src_w, (unsigned)t.src_h, (unsigned)t.frame_id);
     } else {
         n = snprintf(buf, sizeof(buf), "{\"valid\":false,\"seen\":false,\"frame_id\":%u}",

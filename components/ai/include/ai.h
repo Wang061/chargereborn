@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "esp_err.h"
+#include "ai_classes.h"
 #ifdef __cplusplus
 extern "C" {
 #endif

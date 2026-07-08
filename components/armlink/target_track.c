@@ -24,8 +24,6 @@
 #define TRACK_RECAPTURE_COUNT       2       // 连续N帧门外聚集候选才判"目标被挪动"。0707: 3→2 重锁提速
 #define TRACK_RECAPTURE_CLUSTER_PX  20.0f   // 聚集判定：候选两两中心距离阈值
 
-#define TRACK_EXCLUSION_RADIUS_PX   60.0f   // 初始化排除半径(连续模式防重抓)
-
 #define TRACK_STABLE_NU_PX      8.0f    // 稳定判据: 单帧新息阈值。0707实标: 新息真实σ≈3.9px,
                                         // 旧值3px只覆盖~58%帧→STABLE靠运气; 8≈2σ覆盖~97%
 #define TRACK_STABLE_SIGMA_PX   2.5f    // 稳定判据: sqrt(P) 阈值(R=12下确认期P略高,2.0过卡)
@@ -72,7 +70,7 @@ static float angle_diff_mod180(float a, float b) {
     return d;
 }
 
-// —— 内部：清空KF估计与生命周期状态，不碰 gate_ts_us / excl_* ——
+// —— 内部：清空KF估计与生命周期状态，不碰 gate_ts_us ——
 static void reset_estimate(track_state_t *tr) {
     tr->initialized = false;
     tr->confirmed = false;
@@ -86,6 +84,7 @@ static void reset_estimate(track_state_t *tr) {
     tr->last_hit_ts_us = 0;
     tr->last_nu_cx = tr->last_nu_cy = 0.0f;
     tr->last_score = 0.0f;
+    tr->last_cls = -1;
     tr->reject_count = 0;
     tr->win_idx = 0; tr->win_filled = 0;
     for (int i = 0; i < 5; i++) { tr->win_good[i] = false; tr->win_cx[i] = tr->win_cy[i] = tr->win_ang[i] = 0.0f; }
@@ -98,16 +97,6 @@ void track_init(track_state_t *tr) {
     reset_estimate(tr);
     tr->suspended = false;
     tr->gate_ts_us = 0;
-    tr->excl_count = 0;
-    for (int i = 0; i < TRACK_MAX_EXCLUSIONS; i++) { tr->excl_px[i][0] = 0.0f; tr->excl_px[i][1] = 0.0f; }
-}
-
-void track_set_exclusions(track_state_t *tr, const float pts_px[][2], int n) {
-    if (!tr) return;
-    if (n < 0) n = 0;
-    if (n > TRACK_MAX_EXCLUSIONS) n = TRACK_MAX_EXCLUSIONS;
-    tr->excl_count = n;
-    for (int i = 0; i < n; i++) { tr->excl_px[i][0] = pts_px[i][0]; tr->excl_px[i][1] = pts_px[i][1]; }
 }
 
 void track_suspend(track_state_t *tr) { if (tr) tr->suspended = true; }
@@ -192,16 +181,8 @@ bool track_update(track_state_t *tr, const track_box_t *boxes, int count, int64_
     for (int i = 0; i < count; i++) {
         const track_box_t *b = &boxes[i];
         if (b->score < min_score) continue;
-        if (!tr->initialized) {
-            // 新建阶段: 排除区生效(连续模式防重抓)，无空间门限(还没有估计可比)
-            bool excluded = false;
-            for (int e = 0; e < tr->excl_count; e++) {
-                float dx = b->cx - tr->excl_px[e][0], dy = b->cy - tr->excl_px[e][1];
-                if (dx * dx + dy * dy <= TRACK_EXCLUSION_RADIUS_PX * TRACK_EXCLUSION_RADIUS_PX) { excluded = true; break; }
-            }
-            if (excluded) continue;
-        } else {
-            // 已有估计: 空间门限 + 新息门限(排除区不适用——滤波更新不受排除影响)
+        if (tr->initialized) {
+            // 已有估计: 空间门限 + 新息门限
             float dx = b->cx - tr->x_cx, dy = b->cy - tr->x_cy;
             float gate_r = fmaxf(0.5f * sqrtf(fmaxf(tr->x_w * tr->x_h, 0.0f)), TRACK_GATE_MIN_PX);
             if (dx * dx + dy * dy > gate_r * gate_r) continue;
@@ -245,6 +226,7 @@ bool track_update(track_state_t *tr, const track_box_t *boxes, int count, int64_
             tr->hits++;
         }
         tr->last_score = b->score;
+        tr->last_cls = b->cls;
         tr->last_hit_ts_us = capture_ts_us;
         tr->coasting = false;
         tr->reject_count = 0;
@@ -289,6 +271,7 @@ void track_get(const track_state_t *tr, track_output_t *out) {
     if (!out) return;
     if (!tr || !tr->initialized) {
         out->confirmed = false; out->coasting = false; out->stable = false;
+        out->cls = -1;
         out->cx = out->cy = out->w = out->h = out->angle_deg = out->score = 0.0f;
         out->hits = 0;
         return;
@@ -296,6 +279,7 @@ void track_get(const track_state_t *tr, track_output_t *out) {
     out->confirmed = tr->confirmed;
     out->coasting  = tr->coasting;
     out->stable    = tr->confirmed && tr->stable;
+    out->cls = tr->last_cls;
     out->cx = tr->x_cx; out->cy = tr->x_cy;
     out->w  = tr->x_w;  out->h  = tr->x_h;
     out->angle_deg = vec_to_angle(tr->x_c2, tr->x_s2);

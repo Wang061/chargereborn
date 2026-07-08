@@ -16,6 +16,7 @@ typedef struct {
                                // 网页灰十字数据源, 比 confirmed 早 ~2 帧; armctrl 不消费此位。
     bool     stable;           // 已过稳定判据(含滞回); acquire_pose 据此判断可以动臂
     bool     coasting;         // 本帧靠滑行(丢检期间),不可用于开始新动作
+    int      cls;              // 最近一次真实关联帧的类别 id；未知为 -1
     float    center_x_px;      // 滤波后中心 x(640x480 源像素)
     float    center_y_px;      // 滤波后中心 y
     float    angle_deg;        // 滤波后电池长轴角 [0,180)，图像 y 向下
@@ -40,8 +41,6 @@ void armlink_get_last_target(arm_target_t *out);
 void armlink_track_suspend(void);
 // 恢复=硬重置: 回观察位停稳后调用(go_observe_ex 内部已自动调用)。
 void armlink_track_resume(void);
-// 设置连续模式防重抓排除区(px 域,最多 TRACK_MAX_EXCLUSIONS 点)。n=0 清空。
-void armlink_set_exclusions(const float pts_px[][2], int n);
 
 #ifdef __cplusplus
 }

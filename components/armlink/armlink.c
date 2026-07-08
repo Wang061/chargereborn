@@ -23,6 +23,7 @@ esp_err_t armlink_init(void)
     if (!s_lock) s_lock = xSemaphoreCreateMutex();
     if (!s_lock) return ESP_ERR_NO_MEM;
     memset(&s_last, 0, sizeof(s_last));
+    s_last.cls = -1;
     s_last.wrist_deg = NAN;
     track_init(&s_tracker);
     esp_err_t e = armlink_uart_init();   // 禁用时为空桩返回 ESP_OK
@@ -45,6 +46,7 @@ void armlink_update_from_ai(const ai_result_t *r)
     for (int i = 0; i < r->count && n < AI_MAX_BOXES; i++) {
         const ai_box_t *b = &r->boxes[i];
         track_box_t *tb = &boxes[n++];
+        tb->cls = b->cls;
         tb->cx = 0.5f * (float)(b->x1 + b->x2);
         tb->cy = 0.5f * (float)(b->y1 + b->y2);
         tb->w  = (float)(b->x2 - b->x1);
@@ -61,6 +63,7 @@ void armlink_update_from_ai(const ai_result_t *r)
 
     arm_target_t t;
     memset(&t, 0, sizeof(t));
+    t.cls         = out.cls;
     t.wrist_deg   = NAN;
     t.src_w       = (uint32_t)r->src_w;
     t.src_h       = (uint32_t)r->src_h;
@@ -106,14 +109,7 @@ void armlink_track_resume(void)
     s_last.seen = false;
     s_last.stable = false;
     s_last.coasting = false;
+    s_last.cls = -1;
     s_last.frame_id++;
-    xSemaphoreGive(s_lock);
-}
-
-void armlink_set_exclusions(const float pts_px[][2], int n)
-{
-    if (!s_lock) return;
-    xSemaphoreTake(s_lock, portMAX_DELAY);
-    track_set_exclusions(&s_tracker, pts_px, n);
     xSemaphoreGive(s_lock);
 }
