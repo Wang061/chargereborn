@@ -486,28 +486,35 @@ Expected: 日志与网页状态均正确反映两次注入。若无反应，先�
 
 ---
 
-## Task 4: KM1 `handleSerial1()` 独立转发逻辑（用户用 arduino-cli 编译烧录）
+## Task 4: KM1 `loop_uart()` 分发点转发逻辑（用户用 arduino-cli 编译烧录）
 
+> **2026-07-08 修正**：原计划假设语音模块接 KM1 空闲的 Serial1(RX1=GPIO18)，转发走 TX1(GPIO17)。核对原理图（`D:\WJ\jixiebi\5.软件工具\1.原理图\OpenCESP.pdf`，KM1=Open-CESP V1.2）+ 用户实际接线后确认：**该板 Serial1 无排针引出，物理不可达**；语音模块实际接的是 KM1"语音接口"，和 Brain 所接的"openmv接口"经二极管共享同一条 RX2(GPIO41)，语音帧和运动帧走同一条总线、同一套 `uart_data_parse()` 管线。转发点相应改为 `loop_uart()` 的 `case 2:` 分发处，转发出口改为 TX2(GPIO42)（用户已接到 Brain GPIO2）。详见 spec §2/§4 修正说明。
+>
 > **前置确认**：改动目标是 `D:\WJ\jixiebi\steward_km1\steward_km1.ino`（用户自己的可编辑工程），**不是** `reference/esp32.ino` 或 `../4.源代码程序/` 下任何文件（只读参考）。下面给的是精确替换内容，Claude 可以直接用 Edit 工具改这个文件（它在本仓库之外，不受"只读参考"限制），但**编译和烧录由用户用 arduino-cli 自己完成**。
 
 **Files:**
-- Modify: `D:\WJ\jixiebi\steward_km1\steward_km1.ino`（第 757-765 行附近的 `handleSerial1()`；行号以改动前最新读取为准，若之前有其它改动导致行号偏移，按函数名定位而非行号）
+- Modify: `D:\WJ\jixiebi\steward_km1\steward_km1.ino`（`loop_uart()` 函数，约第 732 行附近；行号以改动前最新读取为准，若之前有其它改动导致行号偏移，按函数名定位而非行号）
 
 **Interfaces:**
 - 不影响本仓库任何符号；这段代码独立运行在 KM1 自己的芯片上。
 
-- [ ] **Step 1: 定位并替换 `handleSerial1()`**
+- [ ] **Step 1: 定位并替换 `loop_uart()`**
 
 原内容（`steward_km1.ino`）：
 
 ```c
-// Serial1接收中断回调函数
-void handleSerial1()
-{
-    while (Serial1.available() > 0)
-    {
-        char sbuf_bak = ((char)(Serial1.read()));
-        uart_data_parse(sbuf_bak);
+void loop_uart() {
+    if (uart_get_ok) {
+        switch (uart_mode) {
+            case 1: parse_cmd(uart_receive_buf); break;
+            case 2:
+            case 3: parse_action(uart_receive_buf); break;
+            case 4: save_action(uart_receive_buf); break;
+        }
+
+        uart_get_ok = false;
+        uart_mode = 0;
+        uart_receive_str = "";
     }
 }
 ```
@@ -515,69 +522,47 @@ void handleSerial1()
 替换为：
 
 ```c
-// 语音链路独立小状态机：故意不进 uart_data_parse —— 那是与 Serial2(Brain 下发的
-// 运动帧)共享的全局状态机，`if (uart_get_ok) return;` 会在运动帧未被消费完时把
-// Serial1 的字节整段静默吃掉。这里单独攒 Serial1 字节、只认 "#Start!"/"#Stop!"
-// 两个词，收满一帧原样从 TX1 转发给 Brain。算法与 Brain 侧 voicelink_frame.c
-// 相同，两边各自独立实现(不同工具链，不共享代码)。
-// 见 docs/superpowers/specs/2026-07-08-voice-start-stop-control-design.md §2,§5。
-#define VOICE_FRAME_MAX 15
-static char voice_buf[VOICE_FRAME_MAX + 1];
-static int  voice_len = 0;
-
-void voice_frame_feed(char c)
-{
-    if (c == '#') {
-        voice_len = 1;
-        voice_buf[0] = '#';
-        return;
-    }
-    if (voice_len == 0) return;   // 还没见到帧起始符，忽略
-    if (c == '!') {
-        if (voice_len < VOICE_FRAME_MAX) {
-            voice_buf[voice_len++] = '!';
-            voice_buf[voice_len] = '\0';
-        } else {
-            voice_len = 0;
-            return;   // 超长，不是我们要的帧
+void loop_uart() {
+    if (uart_get_ok) {
+        switch (uart_mode) {
+            case 1: parse_cmd(uart_receive_buf); break;
+            case 2:
+                // 语音链路：原理图 Open-CESPV1.2 "语音接口"与"openmv接口"(Brain 所接)
+                // 经二极管共享同一条 RX2，语音帧和运动帧混在同一条总线上进来，
+                // 都会先经过上面的 uart_data_parse 攒成 "#...!" 帧。这里精确匹配
+                // 语音模块发的 "#Start!"/"#Stop!"，命中就原样从 TX2 转发给 Brain
+                // (Brain 新接的 GPIO2 监听这条线)，不当运动帧处理；其余 # 帧
+                // (含真实运动帧 #dddPddddTdddd!)行为完全不变，走 parse_action。
+                if (strcmp(uart_receive_buf, "#Start!") == 0 || strcmp(uart_receive_buf, "#Stop!") == 0) {
+                    Serial2.print(uart_receive_buf);
+                } else {
+                    parse_action(uart_receive_buf);
+                }
+                break;
+            case 3: parse_action(uart_receive_buf); break;
+            case 4: save_action(uart_receive_buf); break;
         }
-        if (strcmp(voice_buf, "#Start!") == 0 || strcmp(voice_buf, "#Stop!") == 0) {
-            Serial1.print(voice_buf);   // 原样转发给 Brain（TX1=GPIO17）
-        }
-        voice_len = 0;
-        return;
-    }
-    if (voice_len < VOICE_FRAME_MAX) {
-        voice_buf[voice_len++] = c;
-    } else {
-        voice_len = 0;   // 超界放弃这一帧，等下一个 '#' 重来
-    }
-}
 
-// Serial1接收中断回调函数 —— 语音链路专用，独立于 uart_data_parse(见上注释)
-void handleSerial1()
-{
-    while (Serial1.available() > 0)
-    {
-        char sbuf_bak = ((char)(Serial1.read()));
-        voice_frame_feed(sbuf_bak);
+        uart_get_ok = false;
+        uart_mode = 0;
+        uart_receive_str = "";
     }
 }
 ```
 
-不改动 `uart_data_parse`、`parse_action`、`handleSerial2`、`loop_uart` 任何一行。
+不改动 `uart_data_parse`、`handleSerial1`、`handleSerial2` 任何一行；`case 3`（`{...}` 动作组执行模式）和其余分支行为完全不变。`strcmp` 无需新增头文件——文件里 `memset`（同属 `<string.h>`）已经在用，确认可用。
 
 - [ ] **Step 2: 用户自行编译（同以往编译该工程的命令）**
 
-请用户在自己的 arduino-cli 环境里，用平时编译 `steward_km1.ino` 的同一条命令重新编译一次（FQBN/参数保持不变），确认编译通过、体积/内存占用与之前相近（`compile.log` 里之前是 "400783 bytes (30%)" / "26420 bytes (8%)"，新增这一小段代码后应该只有几十到一百多字节的差异，不应有明显跳变）。
+请用户在自己的 arduino-cli 环境里，用平时编译 `steward_km1.ino` 的同一条命令重新编译一次（FQBN/参数保持不变），确认编译通过、体积/内存占用与之前相近（`compile.log` 里之前是 "400783 bytes (30%)" / "26420 bytes (8%)"，新增这一小段代码后应该只有几十字节的差异，不应有明显跳变）。
 
 Expected: 编译成功，无报错，体积无异常跳变。
 
-- [ ] **Step 3: 不接语音模块，先用 USB-TTL 注入 RX1(GPIO18) 验证 KM1 转发**
+- [ ] **Step 3: 验证 KM1 转发（建议先让 Brain 断电/拔线，避免共享总线上同时有真实运动帧干扰判断）**
 
-烧录到 KM1 后（用户自己烧），用 USB-TTL 以 115200 波特率向 KM1 的 RX1(GPIO18) 发送 `#Start!`，同时另一路监听 TX1(GPIO17)（可以是同一个 USB-TTL 转接板的 RX 脚接 KM1 TX1，或者 Claude 用 PowerShell SerialPort 同时开一个串口写入、另一个串口读取，视用户实际接线而定）。
+烧录到 KM1 后（用户自己烧），用 USB-TTL 以 115200 波特率向共享 RX2 节点注入（接"语音接口"或"openmv接口"任一 4 针座的对应数据脚均可，二极管保证不会电气冲突），发送 `#Start!`，同时监听 TX2(GPIO42) 是否原样转发出来。
 
-Expected: TX1 上原样收到 `#Start!`；再测 `#Stop!` 同理。不接语音模块也不接 Brain，只验证 KM1 这段转发逻辑本身没写错，排除掉一个环节的不确定性再往下走。
+Expected: TX2 上原样收到 `#Start!`；再测 `#Stop!` 同理。这一步只验证 KM1 转发逻辑本身没写错，排除掉一个环节的不确定性再往下走；端到端联调（Task 5）时才需要 Brain 同时在线、真实体验共享总线上的交织情况。
 
 ---
 
@@ -587,9 +572,9 @@ Expected: TX1 上原样收到 `#Start!`；再测 `#Stop!` 同理。不接语音�
 
 **Files:** 无代码改动，纯接线 + 真机验证。
 
-- [ ] **Step 1: 接线**
+- [ ] **Step 1: 接线确认**
 
-按 spec 拓扑图：语音模块 TX → KM1 RX1(GPIO18)；新增一根线 KM1 TX1(GPIO17) → Brain GPIO2。
+用户已完成接线（2026-07-08 确认）：语音模块 → KM1"语音接口"（经二极管入共享 RX2）；Brain GPIO2 ← KM1"openmv接口"TX2(GPIO42)。开始本步骤前确认这两处接线仍然牢固（尤其 Brain GPIO2 那根是新接的）。
 
 - [ ] **Step 2: 端到端语音测试**
 
@@ -608,7 +593,7 @@ Expected: TX1 上原样收到 `#Start!`；再测 `#Stop!` 同理。不接语音�
 确认接入语音链路后：
 - 网页 `arun(1)`/`arun(0)` 按钮控制依旧正常；
 - 网页急停 `aestop()` 依旧能立即停止并锁存；
-- Brain→KM1 正常连续抓取（Serial2 路径、运动帧）未受 KM1 侧 `handleSerial1()` 改动影响——理论零风险（改动只碰 Serial1 回调，不碰 `uart_data_parse`/`parse_action`/`handleSerial2`），但仍需真机跑一轮完整"识别→抓取→切割→放回"确认无异常。
+- Brain→KM1 正常连续抓取（真实运动帧路径）未受 KM1 侧 `loop_uart()` 改动影响——改动只在 `case 2:` 分支加一次内容判断，不匹配语音词的帧原样调用 `parse_action`，理论零风险，但仍需真机跑一轮完整"识别→抓取→切割→放回"确认无异常（这是本设计里唯一需要在"语音帧+运动帧真实交织在同一条共享 RX2 总线"条件下验证的场景，见 spec §2 修正说明）。
 
 - [ ] **Step 4: 若一切通过，把配置固化进 `sdkconfig.defaults`（否则 fullclean/新拉仓库默认语音是关的）**
 
@@ -642,3 +627,4 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - **占位符扫描**：全文无 TBD/TODO/"补充错误处理"类占位；所有代码块均为完整可运行内容。
 - **类型一致性**：`voicelink_cmd_t`/`voicelink_frame_state_t`/`voicelink_frame_reset`/`voicelink_frame_feed` 在 Task1 定义、Task2 引用，签名逐字一致；`voicelink_init()` 返回类型 `esp_err_t` 在 Task2 头文件与实现、main.c 调用处一致；Kconfig 四个符号名在 Task2/Task3/Task5 一致。
 - **自查中发现并修正**：初稿 Task3 误写了"commit sdkconfig"——实际 `sdkconfig` 被 `.gitignore` 排除（只有 `sdkconfig.defaults` 入库，已用 `git check-ignore`/`git ls-files` 核实），已改为 Task3 只做本地验证、Task5 末尾才把配置固化进 `sdkconfig.defaults` 并 commit，同时补一次"仅凭 defaults 重新生成配置也能 build"的校验，避免"本地能跑、入库后跑不出来"的坑。
+- **执行中发现并修正（2026-07-08，比自查更晚）**：Task 4 原方案（KM1 Serial1/RX1=18/TX1=17）已按原方案写完代码，但用户反馈"板子上没找到 IO17 的位置"，核对原理图（`Open-CESPV1.2`）后确认该板 Serial1 根本没有排针引出，语音模块实际经"语音接口"与 Brain 所接的"openmv接口"共享同一条 RX2(GPIO41)（二极管 OR，电气安全，但逻辑上同一条总线/同一套解析管线）。已撤销原 `handleSerial1()` 改动，改为在 `loop_uart()` 的 `case 2:` 分发点做内容匹配、经 TX2(GPIO42) 转发（用户已把该脚接到 Brain GPIO2）。spec 与本计划的 Task 4 均已同步更正；Task 1/2（Brain 侧 voicelink 组件）不受影响，未返工。教训：给外部小板子（非标准 DevKit）选引脚时，代码里"看起来空闲"不等于"板子上有排针"，应优先核对原理图或实物，而非仅凭固件代码反推。
