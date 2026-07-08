@@ -430,6 +430,12 @@ static void armctrl_task(void *arg)
             }
         } else {
             ESP_LOGW(TAG, "危险电池: 跳过切割, 直接投危险篮");
+            // 通知 KM1 报警(本地蜂鸣器保底 + 尽力转发给语音模块播报，见
+            // docs/superpowers/specs/2026-07-09-danger-battery-alarm-voice-report-design.md)。
+            // 复用已启用的 armlink UART(GPIO1)，失败只记日志，绝不阻断下面的安全投放动作。
+            if (armlink_uart_send("#Danger!", 0) < 0) {
+                ESP_LOGW(TAG, "危险警报帧发送失败(armlink UART 未启用或写入出错), 继续走安全流程不受影响");
+            }
             if (place_to_bin(DANGER_BIN_X_MM, DANGER_BIN_Y_MM, BIN_RELEASE_Z_MM, "危险") != ESP_OK) {
                 ESP_LOGW(TAG, "危险篮投放失败, 保持夹持回观察位等人工取回");
                 emit_cycle_log(t_identified, t_picked, 0, 0, false);
