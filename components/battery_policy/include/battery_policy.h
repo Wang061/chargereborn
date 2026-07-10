@@ -11,6 +11,7 @@ extern "C" {
 #define BATTERY_POLICY_HORIZONTAL_PICK_Z_MM     0.0f
 #define BATTERY_POLICY_VERTICAL_WRIST_EXTRA_DEG 90.0f
 #define BATTERY_POLICY_VERTICAL_CLOSE_PWM       1640
+#define BATTERY_POLICY_DEMO_FORCE_DANGER        1
 
 typedef enum {
     BATTERY_GRASP_HORIZONTAL = 0,
@@ -33,6 +34,7 @@ typedef enum {
 #define BATTERY_RISK_REASON_NONE               0u
 #define BATTERY_RISK_REASON_AI_BAD_AA          (1u << 0)
 #define BATTERY_RISK_REASON_SENSORS_UNAVAIL    (1u << 1)
+#define BATTERY_RISK_REASON_DEMO_FORCE_DANGER  (1u << 2)
 
 typedef struct {
     battery_risk_level_t level;

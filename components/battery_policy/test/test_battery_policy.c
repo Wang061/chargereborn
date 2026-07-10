@@ -40,10 +40,16 @@ static void test_risk_policy(void)
     CHECK(r.level == BATTERY_RISK_DANGEROUS, "bad_AA is dangerous");
     CHECK((r.reasons & BATTERY_RISK_REASON_AI_BAD_AA) != 0, "bad_AA reason bit set");
     CHECK((r.reasons & BATTERY_RISK_REASON_SENSORS_UNAVAIL) != 0, "sensor unavailable bit retained");
+    CHECK((r.reasons & BATTERY_RISK_REASON_DEMO_FORCE_DANGER) != 0, "demo force danger bit retained");
 
     battery_risk_eval_for_class(AI_CLASS_AA, &r);
-    CHECK(r.level == BATTERY_RISK_NORMAL, "ordinary AA defaults normal");
+    CHECK(r.level == BATTERY_RISK_DANGEROUS, "demo forces ordinary AA dangerous");
     CHECK((r.reasons & BATTERY_RISK_REASON_AI_BAD_AA) == 0, "ordinary AA has no bad_AA reason");
+    CHECK((r.reasons & BATTERY_RISK_REASON_DEMO_FORCE_DANGER) != 0, "ordinary AA has demo force reason");
+
+    battery_risk_eval_for_class(AI_CLASS_18650, &r);
+    CHECK(r.level == BATTERY_RISK_DANGEROUS, "demo forces non-AA dangerous");
+    CHECK((r.reasons & BATTERY_RISK_REASON_DEMO_FORCE_DANGER) != 0, "non-AA has demo force reason");
 
     CHECK(strcmp(battery_grasp_mode_name(BATTERY_GRASP_VERTICAL), "vertical") == 0, "grasp mode name");
     CHECK(strcmp(battery_risk_level_name(BATTERY_RISK_DANGEROUS), "dangerous") == 0, "risk level name");

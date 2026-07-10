@@ -32,6 +32,11 @@ void battery_risk_eval_for_class(int cls, battery_risk_result_t *out)
     out->level = BATTERY_RISK_NORMAL;
     out->reasons = BATTERY_RISK_REASON_SENSORS_UNAVAIL;
 
+#if BATTERY_POLICY_DEMO_FORCE_DANGER
+    out->level = BATTERY_RISK_DANGEROUS;
+    out->reasons |= BATTERY_RISK_REASON_DEMO_FORCE_DANGER;
+#endif
+
     if (cls == AI_CLASS_BAD_AA) {
         out->level = BATTERY_RISK_DANGEROUS;
         out->reasons |= BATTERY_RISK_REASON_AI_BAD_AA;

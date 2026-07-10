@@ -9,6 +9,7 @@
 #include "armlink.h"
 #include "armcal.h"
 #include "armctrl.h"
+#include "net_dash.h"
 
 static const char *TAG = "http_srv";
 
@@ -236,7 +237,10 @@ void net_http_start(void)
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.stack_size = 8192;   // 默认 4096 不够: detect_get 的 buf[1536]+ai_result_t 会撑爆 httpd 任务栈 → 卡死/崩溃
-    config.max_uri_handlers = 16;   // 当前 8 个 URI,保留余量给调试/后续 dashboard
+    config.max_uri_handlers = 16;   // 现有 8 个 + /dash 通配 1 个 + /battery_log 1 个(见net_dash.c) = 10
+    // 通配符匹配器：对不含 */? 的模板要求长度完全相等才命中(ESP-IDF httpd_uri.c 已核实)，
+    // 即以下现有 8 个精确路径 handler 语义不变，只有 net_dash_register 注册的带通配符模板才启用模糊匹配。
+    config.uri_match_fn = httpd_uri_match_wildcard;
     if (httpd_start(&server, &config) != ESP_OK) {
         ESP_LOGE(TAG, "httpd_start failed");
         return;
@@ -257,5 +261,6 @@ void net_http_start(void)
     httpd_register_uri_handler(server, &run);
     httpd_uri_t estop = { .uri = "/arm_estop", .method = HTTP_GET, .handler = arm_estop_get };
     httpd_register_uri_handler(server, &estop);
+    net_dash_register(server);
     ESP_LOGI(TAG, "http server up -> http://192.168.4.1/");
 }
