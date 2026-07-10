@@ -33,16 +33,4 @@ menu "armlink (机械臂通信桩)"
         depends on ARMLINK_UART_ENABLE
         default 115200
 
-    choice ARMLINK_PROTO
-        prompt "发送协议"
-        depends on ARMLINK_UART_ENABLE
-        default ARMLINK_PROTO_KMS
-        help
-            KMS = $KMS:x,y,z,t! (Steward 自做 IK)；WRIST_SERVO = {#004P..T..!} (裸腕角)。
-        config ARMLINK_PROTO_KMS
-            bool "$KMS: 坐标(Steward IK)"
-        config ARMLINK_PROTO_WRIST_SERVO
-            bool "裸腕舵机角"
-    endchoice
-
 endmenu

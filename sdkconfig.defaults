@@ -13,8 +13,28 @@ CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
 # ---- 调试期友好（栈溢出检测；panic 默认打印寄存器+回溯后重启）----
 CONFIG_COMPILER_STACK_CHECK_MODE_NORM=y
 
-# ---- esp-dl ESPDet 模型嵌入 app rodata（M5 单类 18650 模型）----
+# ---- esp-dl ESPDet4 模型嵌入 app rodata（4类电池模型）----
 # 注: <model>_detect 的 flash_partition CMake 调 add_<model>_target,在本地 esp-dl 3.3.5 下该宏已移除 → 配置报错;故用 rodata(已验证)。
-CONFIG_ESPDET_DETECT_MODEL_IN_FLASH_RODATA=y
-CONFIG_FLASH_ESPDET_PICO_224_224_BATTERY=y
-CONFIG_ESPDET_PICO_224_224_BATTERY=y
+CONFIG_ESPDET4_DETECT_MODEL_IN_FLASH_RODATA=y
+CONFIG_FLASH_ESPDET_PICO_224_224_BATTERY4=y
+CONFIG_ESPDET_PICO_224_224_BATTERY4=y
+
+# ---- armlink: Brain→Steward(KM1) UART 命令链路 ----
+# UART 硬件启用，但唯一驱动者是 armctrl 状态机（run 默认 off + 未标定绝不发字节 + 急停锁存，见 armctrl.c）。
+# TX=GPIO1（Brain 空闲脚，避开相机 4-18/21、USB-JTAG 19/20、PSRAM 26-37、strapping 0/3/45/46）。
+# 接线: Brain GPIO1(TX) → KM1 OpenMV 口 RX2(GPIO41) + GND 共地。RX 不接(-1)，KM1 单向收。
+CONFIG_ARMLINK_UART_ENABLE=y
+CONFIG_ARMLINK_UART_PORT_NUM=1
+CONFIG_ARMLINK_UART_TX_GPIO=1
+CONFIG_ARMLINK_UART_RX_GPIO=-1
+CONFIG_ARMLINK_UART_BAUD=115200
+
+# ---- voicelink: 语音开始/停止桩（2026-07-08 完成，见 docs/superpowers/specs/2026-07-08-voice-start-stop-control-design.md）----
+# 语音模块经 KM1 共享 RX2 总线 + loop_uart() 分发点转发 #Start!/#Stop!，KM1 TX2(GPIO42) → Brain 本脚。
+# RX=GPIO2（Brain 空闲脚，已核对 ESP32-S3 官方引脚表为 P2 级无限制通用脚，非 strapping/PSRAM/USB-JTAG）。
+# 只收不发（TX=-1，voicelink_uart_send 尚未实现）；收到匹配帧直接调 armctrl_request_run()，与网页 /arm_run 同一入口。
+CONFIG_VOICELINK_ENABLE=y
+CONFIG_VOICELINK_UART_PORT_NUM=2
+CONFIG_VOICELINK_UART_RX_GPIO=2
+CONFIG_VOICELINK_UART_BAUD=115200
+

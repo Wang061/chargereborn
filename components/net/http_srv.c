@@ -5,10 +5,11 @@
 #include "esp_system.h"
 #include "esp_heap_caps.h"
 #include "esp_http_server.h"
-#include <string.h>
-#include "camera.h"
 #include "ai.h"
 #include "armlink.h"
+#include "armcal.h"
+#include "armctrl.h"
+#include "net_dash.h"
 
 static const char *TAG = "http_srv";
 
@@ -17,32 +18,22 @@ static esp_err_t root_get(httpd_req_t *req)
     const char *html =
         "<!DOCTYPE html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<title>ChargeReborn 采集</title></head>"
+        "<title>ChargeReborn 控制</title></head>"
         "<body style='font-family:sans-serif;text-align:center'>"
-        "<h3>ChargeReborn 数据采集</h3>"
-        "<div>类名 <input id=n value='18650' size=8> "
-        "间隔 <input id=iv value='1.5' size=3>秒 "
-        "<button onclick='shot()'>抓拍</button> "
-        "<button id=run onclick='toggle()'>连拍开始</button> "
-        "已存 <span id=c>0</span> 张</div>"
-        "<div><button id=det onclick='dtog()'>识别开始</button> <span id=ds>-</span></div>"
+        "<h3>ChargeReborn 识别抓取</h3>"
+        "<div><button id=det onclick='dtog()'>识别开始</button> <span id=ds>-</span> <span id=ts style='color:#08c'>-</span></div>"
+        "<div style='margin:6px'>"
+        "<label><input type=checkbox id=cont> 连续模式</label> "
+        "<button onclick='arun(1)'>抓取启动</button> "
+        "<button onclick='arun(0)'>停止</button> "
+        "<button onclick='aestop()' style='background:#c00;color:#fff'>急停</button> "
+        "<button onclick='aclear()'>恢复</button> "
+        "<span id=gs>-</span></div>"
         "<p style='position:relative;display:inline-block;line-height:0'>"
         "<img id=v style='max-width:96vw;display:block'>"
         "<canvas id=ov style='position:absolute;left:0;top:0;pointer-events:none'></canvas>"
         "</p>"
         "<script>"
-        "var t=null,cnt=0;"
-        "function nm(){return encodeURIComponent(document.getElementById('n').value||'cap');}"
-        "function shot(){"
-        "fetch('/capture?name='+nm()).then(function(r){return r.blob();}).then(function(b){"
-        "var a=document.createElement('a');a.href=URL.createObjectURL(b);"
-        "a.download=(document.getElementById('n').value||'cap')+'_'+Date.now()+'.jpg';"
-        "a.click();URL.revokeObjectURL(a.href);"
-        "document.getElementById('c').textContent=++cnt;});}"
-        "function toggle(){var b=document.getElementById('run');"
-        "if(t){clearInterval(t);t=null;b.textContent='连拍开始';return;}"
-        "var ms=Math.max(300,parseFloat(document.getElementById('iv').value||'1.5')*1000);"
-        "t=setInterval(shot,ms);b.textContent='连拍停止';}"
         "var dt=null;"
         "function draw(d){var im=document.getElementById('v'),cv=document.getElementById('ov');"
         "cv.width=im.clientWidth;cv.height=im.clientHeight;"
@@ -59,10 +50,35 @@ static esp_err_t root_get(httpd_req_t *req)
         "dx=Math.cos(th)*L/2,dy=Math.sin(th)*L/2;"
         "g.strokeStyle='#f00';g.beginPath();g.moveTo(cxp-dx,cyp-dy);g.lineTo(cxp+dx,cyp+dy);g.stroke();"
         "g.strokeStyle='#0f0';g.fillText(b.a.toFixed(0),cxp+4,cyp-4);}}}"
-        "function poll(){fetch('/detect').then(function(r){return r.json();}).then(draw).catch(function(){});}"
+        // 跟踪器标记: 画在原始框之上——十字+圆+角度线。三色:
+        // 灰=seen(刚初始化,~0.8s,仅显示) 橙=valid(已确认) 青=STABLE(臂可动)。
+        // 网页上"框会动的是原始检测(>=0.40), 十字是臂真正瞄准的滤波目标", 两层含义不同。
+        "function drawTrk(tk){var cv=document.getElementById('ov'),g=cv.getContext('2d');"
+        "var el=document.getElementById('ts');"
+        "if(!tk.seen){el.textContent='目标:无';return;}"
+        "var sx=cv.width/tk.w,sy=cv.height/tk.h,x=tk.cx*sx,y=tk.cy*sy;"
+        "var col=tk.stable?'#0cf':(tk.valid?'#fa0':'#999');g.lineWidth=3;g.strokeStyle=col;"
+        "g.beginPath();g.arc(x,y,25,0,6.283);g.stroke();"
+        "g.beginPath();g.moveTo(x-32,y);g.lineTo(x+32,y);g.moveTo(x,y-32);g.lineTo(x,y+32);g.stroke();"
+        "var th=tk.angle_deg*Math.PI/180;"
+        "g.beginPath();g.moveTo(x-Math.cos(th)*45,y-Math.sin(th)*45);"
+        "g.lineTo(x+Math.cos(th)*45,y+Math.sin(th)*45);g.stroke();"
+        "el.textContent='目标:'+(tk.stable?'稳定':(tk.valid?(tk.coasting?'滑行':'跟踪'):'捕获中'))+' s='+tk.score.toFixed(2);}"
+        "function poll(){fetch('/detect').then(function(r){return r.json();}).then(function(d){draw(d);"
+        "return fetch('/arm_target');}).then(function(r){return r.json();}).then(drawTrk).catch(function(){});}"
         "function dtog(){var b=document.getElementById('det');"
         "if(dt){clearInterval(dt);dt=null;b.textContent='识别开始';return;}"
-        "dt=setInterval(poll,180);b.textContent='识别停止';}"
+        "poll();dt=setInterval(poll,500);b.textContent='识别停止';}"
+        "function arun(on){var c=document.getElementById('cont').checked?1:0;"
+        "fetch('/arm_run?on='+on+'&cont='+c).then(function(r){return r.json();}).then(function(d){"
+        "document.getElementById('gs').textContent=d.running?(d.cont?'连续运行中':'运行中')"
+        ":(on&&d.estopped?'被拒:急停锁存中(点恢复)':(on?'未启动':'已停止'));}).catch(function(){"
+        "document.getElementById('gs').textContent='请求失败';});}"
+        "function aestop(){fetch('/arm_estop?on=1').then(function(r){return r.json();}).then(function(d){"
+        "document.getElementById('gs').textContent='已急停';}).catch(function(){"
+        "document.getElementById('gs').textContent='急停请求失败!立即断电!';});}"
+        "function aclear(){fetch('/arm_estop?on=0').then(function(r){return r.json();}).then(function(d){"
+        "document.getElementById('gs').textContent=d.estopped?'仍锁存':'已恢复';}).catch(function(){});}"
         "document.getElementById('v').src='http://'+location.hostname+':81/stream';"
         "</script></body></html>";
     httpd_resp_set_type(req, "text/html");
@@ -81,7 +97,12 @@ static esp_err_t status_get(httpd_req_t *req)
     return httpd_resp_send(req, buf, n);
 }
 
+// 仅用于网页叠加显示的原始框门限(与跟踪器喂料门限0.25独立;跟踪器仍吃0.25-1.0全量弱框)。
+#define DETECT_OVERLAY_MIN_SCORE 0.40f
+
 // 实时检测结果（JSON）。读 ai 缓存(生产者=main 的 detect_task)，不触发相机/推理，故 handler 轻。
+// 注: "n"字段报告的是本帧原始检出总数(含弱框,供诊断参考);"boxes"数组只含>=0.40的框(网页叠加用),
+// 两者数量可能不等——这是有意为之,不是bug。
 static esp_err_t detect_get(httpd_req_t *req)
 {
     ai_result_t r;
@@ -90,12 +111,15 @@ static esp_err_t detect_get(httpd_req_t *req)
     int n = snprintf(buf, sizeof(buf),
         "{\"w\":%d,\"h\":%d,\"infer_ms\":%u,\"n\":%d,\"boxes\":[",
         r.src_w, r.src_h, (unsigned)r.infer_ms, r.count);
+    int written = 0;
     for (int i = 0; i < r.count && n < (int)sizeof(buf) - 128; i++) {
+        if (r.boxes[i].score < DETECT_OVERLAY_MIN_SCORE) continue;
         n += snprintf(buf + n, sizeof(buf) - n,
             "%s{\"name\":\"%s\",\"s\":%.2f,\"x1\":%d,\"y1\":%d,\"x2\":%d,\"y2\":%d,\"a\":%.1f,\"aniso\":%.2f}",
-            i ? "," : "", ai_class_name(r.boxes[i].cls), r.boxes[i].score,
+            written ? "," : "", ai_class_name(r.boxes[i].cls), r.boxes[i].score,
             r.boxes[i].x1, r.boxes[i].y1, r.boxes[i].x2, r.boxes[i].y2,
             r.boxes[i].angle_deg, r.boxes[i].anisotropy);
+        written++;
     }
     n += snprintf(buf + n, sizeof(buf) - n, "]}");
     httpd_resp_set_type(req, "application/json");
@@ -103,66 +127,109 @@ static esp_err_t detect_get(httpd_req_t *req)
 }
 
 // 机械臂目标（JSON）。读 armlink 缓存（生产者=detect_task），不触发相机/推理。
+// seen=跟踪器已初始化(几何字段可用,仅供显示); valid=confirmed(臂侧候选); stable=臂可动。
 static esp_err_t arm_target_get(httpd_req_t *req)
 {
     arm_target_t t;
     armlink_get_last_target(&t);
     char buf[256];
     int n;
-    if (t.valid) {
-        // wrist_deg 本步未标定，恒输出 null（标定后改真实值）
+    if (t.seen) {
         n = snprintf(buf, sizeof(buf),
-            "{\"valid\":true,\"cx\":%.1f,\"cy\":%.1f,\"angle_deg\":%.1f,\"score\":%.2f,"
-            "\"wrist_deg\":null,\"w\":%u,\"h\":%u,\"frame_id\":%u}",
+            "{\"valid\":%s,\"seen\":true,\"stable\":%s,\"coasting\":%s,\"cx\":%.1f,\"cy\":%.1f,"
+            "\"angle_deg\":%.1f,\"score\":%.2f,\"cls\":%d,\"cls_name\":\"%s\",\"w\":%u,\"h\":%u,\"frame_id\":%u}",
+            t.valid ? "true" : "false",
+            t.stable ? "true" : "false", t.coasting ? "true" : "false",
             t.center_x_px, t.center_y_px, t.angle_deg, t.score,
+            t.cls, ai_class_name(t.cls),
             (unsigned)t.src_w, (unsigned)t.src_h, (unsigned)t.frame_id);
     } else {
-        n = snprintf(buf, sizeof(buf), "{\"valid\":false,\"frame_id\":%u}", (unsigned)t.frame_id);
+        n = snprintf(buf, sizeof(buf), "{\"valid\":false,\"seen\":false,\"frame_id\":%u}",
+                     (unsigned)t.frame_id);
     }
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, n);
 }
 
-static esp_err_t capture_get(httpd_req_t *req)
+// 标定: GET 查询当前; POST body="H0,H1,...,H8" 写入并置 valid。
+static esp_err_t arm_calib_get(httpd_req_t *req)
 {
-    // 解析 ?name=<类名>，只保留 [0-9A-Za-z_-]，缺省 "cap"
-    char name[32] = "cap";
+    armcal_t c;
+    armcal_load(&c);
+
+    if (req->method == HTTP_POST) {
+        char body[256];
+        int total = req->content_len < (int)sizeof(body) - 1 ? req->content_len : (int)sizeof(body) - 1;
+        int got = 0;
+        while (got < total) {
+            int r = httpd_req_recv(req, body + got, total - got);
+            if (r <= 0) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv"); return ESP_FAIL; }
+            got += r;
+        }
+        body[got] = '\0';
+        float h[9];
+        int nparsed = sscanf(body, "%f,%f,%f,%f,%f,%f,%f,%f,%f",
+            &h[0],&h[1],&h[2],&h[3],&h[4],&h[5],&h[6],&h[7],&h[8]);
+        if (nparsed != 9) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "need 9 floats"); return ESP_FAIL; }
+        for (int i = 0; i < 9; i++) c.H[i] = h[i];
+        c.valid = true;
+        esp_err_t e = armcal_save(&c);
+        if (e == ESP_OK) armctrl_reload_cal();   // 免重启: 让运行中的 armctrl 空闲时重载新标定
+        char ob[64];
+        int n = snprintf(ob, sizeof(ob), "{\"saved\":%s}", e == ESP_OK ? "true" : "false");
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_send(req, ob, n);
+    }
+
+    char buf[320];
+    int n = snprintf(buf, sizeof(buf),
+        "{\"valid\":%s,\"H\":[%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f],"
+        "\"observe\":[%.1f,%.1f,%.1f]}",
+        c.valid ? "true" : "false",
+        c.H[0],c.H[1],c.H[2],c.H[3],c.H[4],c.H[5],c.H[6],c.H[7],c.H[8],
+        c.observe_x, c.observe_y, c.observe_z);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, n);
+}
+
+// 启停一轮/连续抓取: /arm_run?on=1|0&cont=1|0。
+static esp_err_t arm_run_get(httpd_req_t *req)
+{
     size_t qlen = httpd_req_get_url_query_len(req) + 1;
-    if (qlen > 1 && qlen < 128) {
-        char q[128];
+    if (qlen > 1 && qlen < 32) {
+        char q[32], val_on[4], val_cont[4];
         if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK) {
-            char val[32];
-            if (httpd_query_key_value(q, "name", val, sizeof(val)) == ESP_OK && val[0]) {
-                size_t j = 0;
-                for (size_t i = 0; val[i] && j < sizeof(name) - 1; i++) {
-                    char c = val[i];
-                    if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
-                        (c >= 'a' && c <= 'z') || c == '_' || c == '-') {
-                        name[j++] = c;
-                    }
-                }
-                name[j] = '\0';
-                if (j == 0) strcpy(name, "cap");
-            }
+            int on = -1, cont = 0;
+            if (httpd_query_key_value(q, "on", val_on, sizeof(val_on)) == ESP_OK) on = (val_on[0] == '1');
+            if (httpd_query_key_value(q, "cont", val_cont, sizeof(val_cont)) == ESP_OK) cont = (val_cont[0] == '1');
+            if (on >= 0) armctrl_request_run(on != 0, cont != 0);
         }
     }
+    char buf[64];
+    int n = snprintf(buf, sizeof(buf), "{\"running\":%s,\"cont\":%s,\"estopped\":%s}",
+                     armctrl_is_running() ? "true" : "false",
+                     armctrl_is_continuous() ? "true" : "false",
+                     armctrl_is_estopped() ? "true" : "false");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, n);
+}
 
-    camera_fb_t *fb = camera_capture();
-    if (!fb) {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "capture failed");
-        return ESP_FAIL;
+// 急停: /arm_estop?on=1 立即停止并锁存; on=0 显式清除锁存; 其余值(含无参)=纯查询不改状态。
+static esp_err_t arm_estop_get(httpd_req_t *req)
+{
+    size_t qlen = httpd_req_get_url_query_len(req) + 1;
+    if (qlen > 1 && qlen < 32) {
+        char q[32], val[4];
+        if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK &&
+            httpd_query_key_value(q, "on", val, sizeof(val)) == ESP_OK) {
+            if (val[0] == '1') armctrl_estop();
+            else if (val[0] == '0') armctrl_clear_estop();   // 仅显式0清锁,防误触
+        }
     }
-
-    static uint32_t seq = 0;
-    char disp[96];
-    snprintf(disp, sizeof(disp),
-             "attachment; filename=\"%s_%" PRIu32 "_%" PRIu32 ".jpg\"",
-             name, esp_log_timestamp(), seq++);
-    httpd_resp_set_type(req, "image/jpeg");
-    httpd_resp_set_hdr(req, "Content-Disposition", disp);
-    esp_err_t r = httpd_resp_send(req, (const char *)fb->buf, fb->len);
-    camera_return(fb);   // 与 camera_capture 配对
-    return r;
+    char buf[48];
+    int n = snprintf(buf, sizeof(buf), "{\"estopped\":%s}", armctrl_is_estopped() ? "true" : "false");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, n);
 }
 
 void net_http_start(void)
@@ -170,6 +237,10 @@ void net_http_start(void)
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.stack_size = 8192;   // 默认 4096 不够: detect_get 的 buf[1536]+ai_result_t 会撑爆 httpd 任务栈 → 卡死/崩溃
+    config.max_uri_handlers = 16;   // 现有 8 个 + /dash 通配 1 个 + /battery_log 1 个(见net_dash.c) = 10
+    // 通配符匹配器：对不含 */? 的模板要求长度完全相等才命中(ESP-IDF httpd_uri.c 已核实)，
+    // 即以下现有 8 个精确路径 handler 语义不变，只有 net_dash_register 注册的带通配符模板才启用模糊匹配。
+    config.uri_match_fn = httpd_uri_match_wildcard;
     if (httpd_start(&server, &config) != ESP_OK) {
         ESP_LOGE(TAG, "httpd_start failed");
         return;
@@ -178,11 +249,18 @@ void net_http_start(void)
     httpd_uri_t status = { .uri = "/status", .method = HTTP_GET, .handler = status_get };
     httpd_register_uri_handler(server, &root);
     httpd_register_uri_handler(server, &status);
-    httpd_uri_t capture = { .uri = "/capture", .method = HTTP_GET, .handler = capture_get };
-    httpd_register_uri_handler(server, &capture);
     httpd_uri_t detect = { .uri = "/detect", .method = HTTP_GET, .handler = detect_get };
     httpd_register_uri_handler(server, &detect);
     httpd_uri_t arm = { .uri = "/arm_target", .method = HTTP_GET, .handler = arm_target_get };
     httpd_register_uri_handler(server, &arm);
+    httpd_uri_t calib_g = { .uri = "/arm_calib", .method = HTTP_GET,  .handler = arm_calib_get };
+    httpd_register_uri_handler(server, &calib_g);
+    httpd_uri_t calib_p = { .uri = "/arm_calib", .method = HTTP_POST, .handler = arm_calib_get };
+    httpd_register_uri_handler(server, &calib_p);
+    httpd_uri_t run = { .uri = "/arm_run", .method = HTTP_GET, .handler = arm_run_get };
+    httpd_register_uri_handler(server, &run);
+    httpd_uri_t estop = { .uri = "/arm_estop", .method = HTTP_GET, .handler = arm_estop_get };
+    httpd_register_uri_handler(server, &estop);
+    net_dash_register(server);
     ESP_LOGI(TAG, "http server up -> http://192.168.4.1/");
 }

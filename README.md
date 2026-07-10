@@ -35,7 +35,7 @@
 │   ├── net/                 SoftAP + HTTP 服务 + MJPEG 图传 + /detect
 │   ├── ai/                  ESP-DL 推理封装 + 电池长轴角度估计
 │   ├── armlink/             抓取目标解算 + 舵机串口协议（UART 默认关）
-│   └── battery_detect/      自训 ESPDet-Pico 检测器 + 随仓入库的 .espdl 模型
+│   └── battery_detect4/     自训 ESPDet-Pico 4类电池检测器 + 随仓入库的 .espdl 模型
 ├── docs/                     设计规格、决策记录、模型流水线、排障笔记
 ├── scripts/                 IDF 激活入口、串口抓取、拍照等工具
 ├── reference/               旧 OpenMV/Arduino 参考实现与样例图片（仅供参考，不参与构建）

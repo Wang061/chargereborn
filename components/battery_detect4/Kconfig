@@ -1,0 +1,51 @@
+menu "models: battery_detect4"
+    config FLASH_ESPDET_PICO_224_224_BATTERY4
+        bool "flash espdet_pico_224_224_battery4"
+        depends on !ESPDET4_DETECT_MODEL_IN_SDCARD
+        default y
+
+    choice
+        prompt "default"
+        default ESPDET_PICO_224_224_BATTERY4
+        help
+            default battery_detect4 model
+        config ESPDET_PICO_224_224_BATTERY4
+            bool "espdet_pico_224_224_battery4"
+            depends on ESPDET4_DETECT_MODEL_IN_SDCARD || FLASH_ESPDET_PICO_224_224_BATTERY4
+    endchoice
+
+    config DEFAULT_ESPDET4_DETECT_MODEL
+        int
+        # unconditional (sole enum member = 0): espdet4_detect.cpp always compiles
+        # with the component, and .hpp uses this macro as a default arg - a
+        # "default 0 if <model>" would drop the macro (and break the build)
+        # whenever the FLASH flag is toggled off in an existing sdkconfig.
+        default 0
+
+    choice
+        prompt "model location"
+        default ESPDET4_DETECT_MODEL_IN_FLASH_RODATA
+        help
+            espdet4_detect model location
+        config ESPDET4_DETECT_MODEL_IN_FLASH_RODATA
+            bool "flash_rodata"
+        config ESPDET4_DETECT_MODEL_IN_FLASH_PARTITION
+            bool "flash_partition"
+        config ESPDET4_DETECT_MODEL_IN_SDCARD
+            bool "sdcard"
+    endchoice
+
+    config ESPDET4_DETECT_MODEL_LOCATION
+        int
+        default 0 if ESPDET4_DETECT_MODEL_IN_FLASH_RODATA
+        default 1 if ESPDET4_DETECT_MODEL_IN_FLASH_PARTITION
+        default 2 if ESPDET4_DETECT_MODEL_IN_SDCARD
+
+    config ESPDET4_DETECT_MODEL_SDCARD_DIR
+        string "espdet4_detect model sdcard dir"
+        default "models/s3" if IDF_TARGET_ESP32S3
+        default "models/p4" if IDF_TARGET_ESP32P4
+        depends on ESPDET4_DETECT_MODEL_IN_SDCARD
+        help
+            Directory of models relative to sdcard mount point.
+endmenu

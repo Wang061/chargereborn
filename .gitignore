@@ -9,7 +9,7 @@ sdkconfig.old
 # *.espdl 默认是构建产物(build/espdl_models/ 已被上面的 **/build/ 忽略);
 # 但 vendored 进 components/ 的自训模型是参赛交付物, 必须入库
 *.espdl
-!components/battery_detect/models/**/*.espdl
+!components/battery_detect4/models/**/*.espdl
 managed_components/
 datasheets/
 

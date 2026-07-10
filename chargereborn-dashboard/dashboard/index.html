@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ChargeReborn 远程监控终端</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <section class="brand-block" aria-label="项目标题">
+          <p class="eyebrow">ESP32-S3 退役锂电池智能拆解系统</p>
+          <h1>ChargeReborn 远程监控终端</h1>
+        </section>
+
+        <section class="connection-panel" aria-label="设备连接">
+          <div class="status-chip" id="statusChip">
+            <span class="status-dot offline" id="statusDot"></span>
+            <span id="statusText">离线</span>
+          </div>
+          <label class="ws-field">
+            <span>Brain HTTP</span>
+            <input id="httpBaseUrl" type="text" value="http://192.168.4.1" />
+          </label>
+          <button class="btn primary" id="httpConnectBtn" type="button">连接固件</button>
+          <label class="ws-field">
+            <span>WebSocket</span>
+            <input id="wsUrl" type="url" value="ws://192.168.4.1/ws" />
+          </label>
+          <button class="btn ghost" id="proxyBtn" type="button">本地代理</button>
+          <button class="btn ghost" id="connectBtn" type="button">连接WS</button>
+        </section>
+      </header>
+
+      <section class="alert-line" id="messageLine" aria-live="polite">
+        等待连接 Brain 模块。无硬件时可使用演示数据展示答辩流程。
+      </section>
+
+      <section class="dashboard-grid">
+        <section class="panel video-panel" aria-labelledby="videoTitle">
+          <div class="panel-heading">
+            <div>
+              <p class="section-kicker">WebRTC Live View</p>
+              <h2 id="videoTitle">实时视频监控</h2>
+            </div>
+            <button class="btn ghost" id="refreshVideoBtn" type="button">刷新画面</button>
+          </div>
+
+          <div class="video-stage">
+            <img id="mjpegStream" alt="Brain MJPEG 视频流" />
+            <video id="remoteVideo" autoplay playsinline muted></video>
+            <img id="fallbackFrame" alt="Brain 摄像头 JPEG 帧" />
+            <div class="video-placeholder" id="videoPlaceholder">
+              <span>等待 Brain 视频流</span>
+            </div>
+          </div>
+
+          <dl class="metric-row">
+            <div>
+              <dt>识别状态</dt>
+              <dd id="aiStatus">待机</dd>
+            </div>
+            <div>
+              <dt>AI 推理帧率</dt>
+              <dd><span id="aiFps">0.0</span> FPS</dd>
+            </div>
+            <div>
+              <dt>设备模式</dt>
+              <dd id="deviceMode">离线</dd>
+            </div>
+            <div>
+              <dt>抓取目标</dt>
+              <dd id="armTarget">未锁定</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section class="panel control-panel" aria-labelledby="controlTitle">
+          <div class="panel-heading">
+            <div>
+              <p class="section-kicker">Safety Control</p>
+              <h2 id="controlTitle">远程控制</h2>
+            </div>
+          </div>
+
+          <button class="estop-button" id="estopBtn" type="button">
+            远程急停
+          </button>
+          <p class="control-copy">
+            指令经 WebSocket 下发至 Brain，再由 UART 通知 Steward 进入安全停机。
+          </p>
+          <dl class="command-status">
+            <div>
+              <dt>最近指令</dt>
+              <dd id="lastCommand">无</dd>
+            </div>
+            <div>
+              <dt>下发状态</dt>
+              <dd id="commandState">等待操作</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section class="panel trace-panel" aria-labelledby="traceTitle">
+          <div class="panel-heading">
+            <div>
+              <p class="section-kicker">Battery Passport Trace</p>
+              <h2 id="traceTitle">电池全流程溯源</h2>
+            </div>
+          </div>
+
+          <form class="trace-form" id="traceForm">
+            <input
+              id="batteryId"
+              type="text"
+              placeholder="输入唯一ID，如 BAT-20260706-001"
+              autocomplete="off"
+            />
+            <button class="btn primary" type="submit">查询</button>
+          </form>
+
+          <p class="passport-note">
+            面向欧盟电池护照监管理念设计：每节电池从识别、抓取、切割到异常判定均形成可追溯记录。
+          </p>
+
+          <div class="trace-result" id="traceResult">
+            <p class="empty-state">请输入电池唯一 ID 查询处理记录。</p>
+          </div>
+        </section>
+
+        <section class="panel carbon-panel" aria-labelledby="carbonTitle">
+          <div class="panel-heading">
+            <div>
+              <p class="section-kicker">Carbon Dashboard</p>
+              <h2 id="carbonTitle">碳排放节约仪表盘</h2>
+            </div>
+          </div>
+
+          <div class="carbon-hero">
+            <span class="carbon-label">累计节约 CO2</span>
+            <strong><span id="totalCo2">0</span> g</strong>
+          </div>
+
+          <div class="carbon-stats">
+            <div>
+              <span>今日</span>
+              <strong><span id="todayCo2">0</span> g</strong>
+            </div>
+            <div>
+              <span>本周</span>
+              <strong><span id="weekCo2">0</span> g</strong>
+            </div>
+          </div>
+
+          <canvas id="carbonChart" width="720" height="260" aria-label="近七日碳减排柱状图"></canvas>
+        </section>
+      </section>
+    </main>
+
+    <dialog class="confirm-dialog" id="confirmDialog">
+      <form method="dialog">
+        <h2>确认远程急停？</h2>
+        <p>该操作会立即下发 ESTOP 指令，硬件端应在 100ms 级响应并切断运动流程。</p>
+        <div class="dialog-actions">
+          <button class="btn ghost" value="cancel" type="submit">取消</button>
+          <button class="btn danger" id="confirmEstopBtn" value="confirm" type="submit">确认急停</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

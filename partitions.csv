@@ -1,7 +1,8 @@
 # S3-Forge 自定义分区表（含 coredump 取证 + esp-dl 模型分区）
+# factory 8MB: 为 YOLOv8n 级模型(~3.2MB) rodata 内嵌 + 双模型 A/B 共存腾量(2026-07-04, docs/ai/DECISIONS.md)
 # Name,     Type, SubType,  Offset,  Size,    Flags
 nvs,        data, nvs,      ,        0x6000,
 phy_init,   data, phy,      ,        0x1000,
-factory,    app,  factory,  ,        0x400000,
+factory,    app,  factory,  ,        0x800000,
 espdet_det, data, spiffs,   ,        0x300000,
 coredump,   data, coredump, ,        0x10000,
